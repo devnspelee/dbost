@@ -16,6 +16,11 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true">
+         
+    <service
+    android:name=".OverlayService"
+    android:exported="false"
+    android:foregroundServiceType="specialUse" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -39,3 +44,6 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
