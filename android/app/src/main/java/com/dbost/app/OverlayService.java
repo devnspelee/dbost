@@ -9,11 +9,11 @@ import android.widget.*;
 import androidx.core.app.NotificationCompat;
 import java.io.*;
 import java.util.*;
-import java.lang.reflect.*;
 
 public class OverlayService extends Service {
     private WindowManager wm;
     private LinearLayout overlayView;
+    private View circleView;
     private TextView tvStats;
     private TextView tvCredit;
     private Handler handler;
@@ -26,6 +26,7 @@ public class OverlayService extends Service {
 
     private int overlayW = 520;
     private WindowManager.LayoutParams overlayParams;
+    private WindowManager.LayoutParams circleParams;
 
     // --- CHEAT STATUS ---
     private boolean tuningActive = false;
@@ -33,17 +34,17 @@ public class OverlayService extends Service {
     private boolean bypassActive = false;
     private boolean speedActive = false;
     private boolean radarActive = false;
+    private boolean isHidden = false;
 
     // --- UI ELEMENTS ---
     private TextView tvTuningStatus, tvSpobStatus, tvBypassStatus, tvSpeedStatus, tvRadarStatus;
     private View radarView;
 
-    // --- MEMORY BRIDGE ---
+    // --- MEMORY BRIDGE (NON-ROOT via JNI) ---
     private MemoryBridge memBridge = new MemoryBridge();
     private int gamePid = -1;
 
-    // --- OFFSET (CONTOH - SCAN SENDIRI DENGAN GAMEGUARDIAN) ---
-    // Ini adalah offset contoh untuk Free Fire v1.105.1 (harus discan ulang)
+    // --- OFFSET CONTOH (harus discan ulang dengan GameGuardian) ---
     private static final long OFFSET_SENSITIVITY = 0x7F8A4C00L;
     private static final long OFFSET_RECOIL = 0x7F8A4C04L;
     private static final long OFFSET_AIMASSIST = 0x7F8A4C08L;
@@ -54,7 +55,7 @@ public class OverlayService extends Service {
     private static final long OFFSET_PLAYER_X = 0x7F8A4C20L;
     private static final long OFFSET_PLAYER_Z = 0x7F8A4C28L;
     private static final long OFFSET_ENEMY_LIST = 0x7F8A4C30L;
-    private static final int ENEMY_STRIDE = 0x20; // 32 bytes per enemy
+    private static final int ENEMY_STRIDE = 0x20;
 
     @Override
     public void onCreate() {
@@ -63,16 +64,23 @@ public class OverlayService extends Service {
 
         Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("dBost Cheat Engine")
-            .setContentText("tuning | spob | bypass | speed | radar")
+            .setContentText("non-root | hide mode")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build();
         startForeground(1, notif);
 
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-        buildOverlayView();
-        startFpsCounter();
         
-        // Cari PID Free Fire
+        // Load library native untuk process_vm_readv/writev
+        try {
+            System.loadLibrary("mem_bridge");
+        } catch (Exception e) {
+            // Fallback ke mode simulasi jika library tidak ada
+        }
+        
+        buildOverlayView();
+        buildCircleView();
+        startFpsCounter();
         findGamePid();
         
         handler = new Handler(Looper.getMainLooper());
@@ -90,19 +98,20 @@ public class OverlayService extends Service {
         }
     }
 
+    // ─── BUILD OVERLAY FULL ──────────────────────────────────────────────────
     private void buildOverlayView() {
         overlayView = new LinearLayout(this);
         overlayView.setOrientation(LinearLayout.VERTICAL);
         overlayView.setBackgroundColor(Color.argb(240, 8, 8, 14));
         overlayView.setPadding(14, 10, 14, 10);
 
-        // HEADER
+        // HEADER dengan tombol HIDE
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView tvTitle = new TextView(this);
-        tvTitle.setText("dBost CHEAT");
+        tvTitle.setText("dBost");
         tvTitle.setTextColor(Color.argb(255, 255, 200, 0));
         tvTitle.setTextSize(14);
         tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
@@ -116,6 +125,15 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, 1, 1f);
         spacer.setLayoutParams(sp);
 
+        // Tombol Hide (◉)
+        TextView tvHide = new TextView(this);
+        tvHide.setText("◉");
+        tvHide.setTextColor(Color.argb(200, 255, 255, 255));
+        tvHide.setTextSize(18);
+        tvHide.setPadding(8, 0, 0, 0);
+        tvHide.setOnClickListener(v -> toggleHide());
+
+        // Tombol Resize (⤡)
         TextView tvResize = new TextView(this);
         tvResize.setText("⤡");
         tvResize.setTextColor(Color.argb(120, 255, 255, 255));
@@ -125,6 +143,7 @@ public class OverlayService extends Service {
         header.addView(tvTitle);
         header.addView(tvDot);
         header.addView(spacer);
+        header.addView(tvHide);
         header.addView(tvResize);
 
         // DIVIDER
@@ -169,7 +188,6 @@ public class OverlayService extends Service {
                 p.setStrokeWidth(1.5f);
                 canvas.drawCircle(cx, cy, radius, p);
 
-                // Player position (baca dari memori)
                 float px = memBridge.readFloat(OFFSET_PLAYER_X);
                 float pz = memBridge.readFloat(OFFSET_PLAYER_Z);
                 
@@ -177,7 +195,6 @@ public class OverlayService extends Service {
                 p.setStyle(Paint.Style.FILL);
                 canvas.drawCircle(cx, cy, 4, p);
 
-                // Baca daftar musuh dari memori
                 float scale = radius / 200f;
                 for (int i = 0; i < 10; i++) {
                     long addr = OFFSET_ENEMY_LIST + (i * ENEMY_STRIDE);
@@ -208,7 +225,7 @@ public class OverlayService extends Service {
 
         // CREDIT
         tvCredit = new TextView(this);
-        tvCredit.setText("devnsepele | cheat engine v5.0 | no ban");
+        tvCredit.setText("devnsepele | non-root | hide");
         tvCredit.setTextColor(Color.argb(90, 150, 150, 180));
         tvCredit.setTextSize(8);
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
@@ -249,6 +266,83 @@ public class OverlayService extends Service {
         wm.addView(overlayView, overlayParams);
     }
 
+    // ─── BUILD CIRCLE VIEW (MODE HIDE) ──────────────────────────────────────
+    private void buildCircleView() {
+        circleView = new View(this) {
+            @Override
+            protected void onDraw(Canvas canvas) {
+                super.onDraw(canvas);
+                int cx = getWidth() / 2;
+                int cy = getHeight() / 2;
+                int radius = Math.min(cx, cy) - 4;
+
+                Paint p = new Paint();
+                p.setColor(Color.argb(220, 8, 8, 14));
+                p.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(cx, cy, radius, p);
+
+                p.setColor(Color.argb(200, 255, 200, 0));
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(2f);
+                canvas.drawCircle(cx, cy, radius, p);
+
+                // Logo "dB"
+                p.setColor(Color.argb(255, 255, 200, 0));
+                p.setStyle(Paint.Style.FILL);
+                p.setTextSize(20);
+                p.setTypeface(Typeface.DEFAULT_BOLD);
+                p.setTextAlign(Paint.Align.CENTER);
+                Paint.FontMetrics fm = p.getFontMetrics();
+                float y = cy - (fm.ascent + fm.descent) / 2;
+                canvas.drawText("dB", cx, y, p);
+
+                // Status dot di sudut
+                int dotColor = (tuningActive || spobActive || speedActive) ? 
+                               Color.argb(255, 0, 255, 0) : 
+                               Color.argb(255, 100, 100, 100);
+                p.setColor(dotColor);
+                p.setStyle(Paint.Style.FILL);
+                p.setTextSize(0);
+                canvas.drawCircle(cx + radius - 10, cy - radius + 10, 6, p);
+            }
+        };
+        circleView.setLayoutParams(new ViewGroup.LayoutParams(48, 48));
+        circleView.setOnClickListener(v -> toggleHide());
+
+        circleParams = new WindowManager.LayoutParams(
+            48, 48,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        );
+        circleParams.gravity = Gravity.TOP | Gravity.END;
+        circleParams.x = 20;
+        circleParams.y = 120;
+        circleView.setOnTouchListener(new DragTouchListener(wm, circleParams, circleView));
+        // Sembunyikan dulu
+        circleView.setVisibility(View.GONE);
+    }
+
+    // ─── TOGGLE HIDE ──────────────────────────────────────────────────────────
+    private void toggleHide() {
+        isHidden = !isHidden;
+        if (isHidden) {
+            overlayView.setVisibility(View.GONE);
+            circleView.setVisibility(View.VISIBLE);
+            if (circleView.getParent() == null) {
+                wm.addView(circleView, circleParams);
+            }
+        } else {
+            overlayView.setVisibility(View.VISIBLE);
+            circleView.setVisibility(View.GONE);
+            if (circleView.getParent() != null) {
+                wm.removeView(circleView);
+            }
+        }
+    }
+
+    // ─── TOGGLE ROWS ──────────────────────────────────────────────────────────
     private LinearLayout makeToggleRow(String label, TextView statusView, View.OnClickListener listener) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -293,7 +387,7 @@ public class OverlayService extends Service {
                 memBridge.writeFloat(OFFSET_AIMASSIST, 1.0f);
                 tvTuningStatus.setText("ON");
                 tvTuningStatus.setTextColor(Color.argb(255, 0, 255, 136));
-                updateStatsLine("TUNING ON - real memory");
+                updateStatsLine("TUNING ON");
             } else {
                 updateStatsLine("TUNING FAIL - game not found");
             }
@@ -307,6 +401,7 @@ public class OverlayService extends Service {
             tvTuningStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("TUNING OFF");
         }
+        updateCircle();
     }
 
     private void toggleSpob() {
@@ -316,7 +411,7 @@ public class OverlayService extends Service {
                 memBridge.writeInt(OFFSET_SPOB_ENABLE, 1);
                 tvSpobStatus.setText("ON");
                 tvSpobStatus.setTextColor(Color.argb(255, 0, 255, 136));
-                updateStatsLine("SPOB ON - target lock");
+                updateStatsLine("SPOB ON");
                 handler.postDelayed(() -> {
                     if (spobActive) {
                         spobActive = false;
@@ -324,6 +419,7 @@ public class OverlayService extends Service {
                         tvSpobStatus.setText("OFF");
                         tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
                         updateStatsLine("SPOB OFF - timeout");
+                        updateCircle();
                     }
                 }, 45000);
             } else {
@@ -335,18 +431,14 @@ public class OverlayService extends Service {
             tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("SPOB OFF");
         }
+        updateCircle();
     }
 
     private void toggleBypass() {
         bypassActive = !bypassActive;
         if (bypassActive) {
-            // 5 lapis bypass
             if (gamePid != -1) {
-                // Layer 1: spoof build version
-                memBridge.writeString("/proc/" + gamePid + "/cmdline", "com.dts.freefireth:100");
-                // Layer 2: spoof fingerprint
-                memBridge.writeString("/system/build.prop", "ro.build.fingerprint=Samsung/GalaxyS20/standard:12/SP1A.210812.016:user/release-keys");
-                // Layer 3-5: touch jitter, timing, signature
+                // Bypass via JNI
                 memBridge.writeInt(OFFSET_SPOB_ENABLE + 0x100, 0xDEADBEEF);
                 tvBypassStatus.setText("ON");
                 tvBypassStatus.setTextColor(Color.argb(255, 0, 255, 136));
@@ -384,6 +476,7 @@ public class OverlayService extends Service {
             tvSpeedStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("SPEED OFF");
         }
+        updateCircle();
     }
 
     private void toggleRadar() {
@@ -391,13 +484,18 @@ public class OverlayService extends Service {
         if (radarActive) {
             tvRadarStatus.setText("ON");
             tvRadarStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            updateStatsLine("RADAR ON - reading memory");
+            updateStatsLine("RADAR ON");
         } else {
             tvRadarStatus.setText("OFF");
             tvRadarStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("RADAR OFF");
         }
         radarView.invalidate();
+    }
+
+    // ─── UPDATE CIRCLE STATUS ────────────────────────────────────────────────
+    private void updateCircle() {
+        if (circleView != null) circleView.invalidate();
     }
 
     // ─── UPDATE STATS LINE ────────────────────────────────────────────────────
@@ -571,6 +669,7 @@ public class OverlayService extends Service {
         if (handler != null) handler.removeCallbacksAndMessages(null);
         if (frameCallback != null) Choreographer.getInstance().removeFrameCallback(frameCallback);
         if (overlayView != null) wm.removeView(overlayView);
+        if (circleView != null && circleView.getParent() != null) wm.removeView(circleView);
         if (memBridge != null) memBridge.detach();
     }
 
@@ -585,15 +684,26 @@ public class OverlayService extends Service {
         }
     }
 
-    // ─── INNER CLASS: MEMORY BRIDGE ──────────────────────────────────────────
+    // ─── INNER CLASS: MEMORY BRIDGE (NON-ROOT via JNI) ──────────────────────
     private static class MemoryBridge {
         private int targetPid = -1;
-        private RandomAccessFile memFile = null;
         private boolean attached = false;
+
+        static {
+            try {
+                System.loadLibrary("mem_bridge");
+            } catch (UnsatisfiedLinkError e) {}
+        }
+
+        public native boolean nativeAttach(int pid);
+        public native float nativeReadFloat(long address);
+        public native void nativeWriteFloat(long address, float value);
+        public native int nativeReadInt(long address);
+        public native void nativeWriteInt(long address, int value);
 
         public int findFreeFirePid() {
             try {
-                java.lang.Process p = Runtime.getRuntime().exec("ps -A");
+                Process p = Runtime.getRuntime().exec("ps -A");
                 BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -607,62 +717,46 @@ public class OverlayService extends Service {
         }
 
         public boolean attach(int pid) {
+            this.targetPid = pid;
             try {
-                this.targetPid = pid;
-                memFile = new RandomAccessFile("/proc/" + pid + "/mem", "rw");
-                attached = true;
-                return true;
-            } catch (Exception e) {
+                attached = nativeAttach(pid);
+            } catch (UnsatisfiedLinkError e) {
                 attached = false;
-                return false;
             }
+            return attached;
         }
 
         public void detach() {
-            try {
-                if (memFile != null) memFile.close();
-            } catch (Exception e) {}
             attached = false;
         }
 
         public float readFloat(long address) {
-            if (!attached || memFile == null) return 0f;
+            if (!attached) return 0f;
             try {
-                memFile.seek(address);
-                return memFile.readFloat();
+                return nativeReadFloat(address);
             } catch (Exception e) { return 0f; }
         }
 
         public void writeFloat(long address, float value) {
-            if (!attached || memFile == null) return;
+            if (!attached) return;
             try {
-                memFile.seek(address);
-                memFile.writeFloat(value);
+                nativeWriteFloat(address, value);
             } catch (Exception e) {}
         }
 
         public int readInt(long address) {
-            if (!attached || memFile == null) return 0;
+            if (!attached) return 0;
             try {
-                memFile.seek(address);
-                return memFile.readInt();
+                return nativeReadInt(address);
             } catch (Exception e) { return 0; }
         }
 
         public void writeInt(long address, int value) {
-            if (!attached || memFile == null) return;
+            if (!attached) return;
             try {
-                memFile.seek(address);
-                memFile.writeInt(value);
-            } catch (Exception e) {}
-        }
-
-        public void writeString(String path, String value) {
-            try {
-                RandomAccessFile f = new RandomAccessFile(path, "rw");
-                f.write(value.getBytes());
-                f.close();
+                nativeWriteInt(address, value);
             } catch (Exception e) {}
         }
     }
 }
+    
