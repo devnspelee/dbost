@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+sed -n '880,892p' src/App.jsximport { useState, useEffect, useRef, useCallback } from "react";
 
 import { registerPlugin, Capacitor } from '@capacitor/core';
 // ─── Palette ─────────────────────────────────────────────────────────────────
