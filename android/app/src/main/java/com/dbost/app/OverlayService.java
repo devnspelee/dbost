@@ -9,6 +9,7 @@ import android.widget.*;
 import androidx.core.app.NotificationCompat;
 import java.io.*;
 import java.util.*;
+import java.lang.reflect.*;
 
 public class OverlayService extends Service {
     private WindowManager wm;
@@ -35,11 +36,25 @@ public class OverlayService extends Service {
 
     // --- UI ELEMENTS ---
     private TextView tvTuningStatus, tvSpobStatus, tvBypassStatus, tvSpeedStatus, tvRadarStatus;
-    private View radarView; // canvas untuk radar
+    private View radarView;
 
-    // --- SIMULASI DATA MUSUH (untuk radar) ---
-    private float playerX = 0f, playerY = 0f, playerZ = 0f;
-    private List<float[]> enemyPositions = new ArrayList<>(); // {x, y, z, team}
+    // --- MEMORY BRIDGE ---
+    private MemoryBridge memBridge = new MemoryBridge();
+    private int gamePid = -1;
+
+    // --- OFFSET (CONTOH - SCAN SENDIRI DENGAN GAMEGUARDIAN) ---
+    // Ini adalah offset contoh untuk Free Fire v1.105.1 (harus discan ulang)
+    private static final long OFFSET_SENSITIVITY = 0x7F8A4C00L;
+    private static final long OFFSET_RECOIL = 0x7F8A4C04L;
+    private static final long OFFSET_AIMASSIST = 0x7F8A4C08L;
+    private static final long OFFSET_MOVE_SPEED = 0x7F8A4C0CL;
+    private static final long OFFSET_SPRINT = 0x7F8A4C10L;
+    private static final long OFFSET_JUMP = 0x7F8A4C14L;
+    private static final long OFFSET_SPOB_ENABLE = 0x7F8A4C18L;
+    private static final long OFFSET_PLAYER_X = 0x7F8A4C20L;
+    private static final long OFFSET_PLAYER_Z = 0x7F8A4C28L;
+    private static final long OFFSET_ENEMY_LIST = 0x7F8A4C30L;
+    private static final int ENEMY_STRIDE = 0x20; // 32 bytes per enemy
 
     @Override
     public void onCreate() {
@@ -56,10 +71,23 @@ public class OverlayService extends Service {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         buildOverlayView();
         startFpsCounter();
-        startEnemySimulator(); // simulasi musuh untuk radar
+        
+        // Cari PID Free Fire
+        findGamePid();
+        
         handler = new Handler(Looper.getMainLooper());
         handler.postDelayed(statsUpdater, 1000);
-        handler.postDelayed(radarUpdater, 200); // radar update 5x per detik
+        handler.postDelayed(radarUpdater, 200);
+    }
+
+    private void findGamePid() {
+        gamePid = memBridge.findFreeFirePid();
+        if (gamePid != -1) {
+            memBridge.attach(gamePid);
+            updateStatsLine("Game found PID: " + gamePid);
+        } else {
+            updateStatsLine("Game not running");
+        }
     }
 
     private void buildOverlayView() {
@@ -68,7 +96,7 @@ public class OverlayService extends Service {
         overlayView.setBackgroundColor(Color.argb(240, 8, 8, 14));
         overlayView.setPadding(14, 10, 14, 10);
 
-        // ── HEADER ──────────────────────────────────────────────────────────────
+        // HEADER
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -99,40 +127,39 @@ public class OverlayService extends Service {
         header.addView(spacer);
         header.addView(tvResize);
 
-        // ── DIVIDER ────────────────────────────────────────────────────────────
+        // DIVIDER
         View divider = new View(this);
         divider.setBackgroundColor(Color.argb(60, 255, 255, 255));
         LinearLayout.LayoutParams dp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 1);
         dp.topMargin = 6; dp.bottomMargin = 6;
 
-        // ── STATS LINE ─────────────────────────────────────────────────────────
+        // STATS
         tvStats = new TextView(this);
         tvStats.setText("CPU 0% | RAM 0% | FPS 0 | BAT 0%");
         tvStats.setTextColor(Color.argb(230, 220, 220, 235));
         tvStats.setTextSize(10);
         tvStats.setTypeface(Typeface.MONOSPACE);
 
-        // ── BUTTON ROWS ────────────────────────────────────────────────────────
+        // BUTTON ROWS
         LinearLayout rowTuning = makeToggleRow("TUNING:", tvTuningStatus = new TextView(this), v -> toggleTuning());
         LinearLayout rowSpob = makeToggleRow("SPOB:", tvSpobStatus = new TextView(this), v -> toggleSpob());
         LinearLayout rowBypass = makeToggleRow("BYPASS:", tvBypassStatus = new TextView(this), v -> toggleBypass());
         LinearLayout rowSpeed = makeToggleRow("SPEED:", tvSpeedStatus = new TextView(this), v -> toggleSpeed());
         LinearLayout rowRadar = makeToggleRow("RADAR:", tvRadarStatus = new TextView(this), v -> toggleRadar());
 
-        // ── RADAR CANVAS (lingkaran kecil) ────────────────────────────────────
+        // RADAR CANVAS
         radarView = new View(this) {
             @Override
             protected void onDraw(Canvas canvas) {
                 super.onDraw(canvas);
-                if (!radarActive) return;
+                if (!radarActive || gamePid == -1) return;
                 int w = getWidth();
                 int h = getHeight();
                 int cx = w / 2;
                 int cy = h / 2;
                 int radius = Math.min(w, h) / 2 - 6;
 
-                // Lingkaran luar
                 Paint p = new Paint();
                 p.setColor(Color.argb(120, 50, 50, 70));
                 p.setStyle(Paint.Style.FILL);
@@ -142,32 +169,36 @@ public class OverlayService extends Service {
                 p.setStrokeWidth(1.5f);
                 canvas.drawCircle(cx, cy, radius, p);
 
-                // Titik tengah (pemain)
+                // Player position (baca dari memori)
+                float px = memBridge.readFloat(OFFSET_PLAYER_X);
+                float pz = memBridge.readFloat(OFFSET_PLAYER_Z);
+                
                 p.setColor(Color.argb(255, 0, 255, 0));
                 p.setStyle(Paint.Style.FILL);
                 canvas.drawCircle(cx, cy, 4, p);
 
-                // Musuh (hanya jika dalam radius 200 unit)
-                float scale = radius / 200f; // 200 unit = radius penuh
-                synchronized (enemyPositions) {
-                    for (float[] pos : enemyPositions) {
-                        float dx = pos[0] - playerX;
-                        float dz = pos[2] - playerZ;
-                        float dist = (float) Math.sqrt(dx*dx + dz*dz);
-                        if (dist > 200f) continue;
-                        float angle = (float) Math.atan2(dz, dx);
-                        float rx = cx + (float) (dist * scale * Math.cos(angle));
-                        float ry = cy + (float) (dist * scale * Math.sin(angle));
-                        // Warna berdasarkan tim (2,3,4 = merah, oranye, kuning)
-                        int team = (int)pos[3];
-                        int color = (team == 2) ? Color.argb(255, 255, 50, 50) :
-                                    (team == 3) ? Color.argb(255, 255, 150, 0) :
-                                    Color.argb(255, 255, 200, 50);
-                        p.setColor(color);
-                        p.setStyle(Paint.Style.FILL);
-                        float dotSize = Math.max(3, 6 - dist / 50f);
-                        canvas.drawCircle(rx, ry, dotSize, p);
-                    }
+                // Baca daftar musuh dari memori
+                float scale = radius / 200f;
+                for (int i = 0; i < 10; i++) {
+                    long addr = OFFSET_ENEMY_LIST + (i * ENEMY_STRIDE);
+                    float ex = memBridge.readFloat(addr);
+                    float ez = memBridge.readFloat(addr + 8);
+                    int team = memBridge.readInt(addr + 16);
+                    if (ex == 0 && ez == 0) continue;
+                    float dx = ex - px;
+                    float dz = ez - pz;
+                    float dist = (float) Math.sqrt(dx*dx + dz*dz);
+                    if (dist > 200f || dist < 0.5f) continue;
+                    float angle = (float) Math.atan2(dz, dx);
+                    float rx = cx + (float) (dist * scale * Math.cos(angle));
+                    float ry = cy + (float) (dist * scale * Math.sin(angle));
+                    int color = (team == 2) ? Color.argb(255, 255, 50, 50) :
+                                (team == 3) ? Color.argb(255, 255, 150, 0) :
+                                Color.argb(255, 255, 200, 50);
+                    p.setColor(color);
+                    p.setStyle(Paint.Style.FILL);
+                    float dotSize = Math.max(3, 6 - dist / 50f);
+                    canvas.drawCircle(rx, ry, dotSize, p);
                 }
             }
         };
@@ -175,7 +206,7 @@ public class OverlayService extends Service {
         radarView.setBackgroundColor(Color.argb(60, 0, 0, 0));
         radarView.setPadding(4, 4, 4, 4);
 
-        // ── CREDIT ─────────────────────────────────────────────────────────────
+        // CREDIT
         tvCredit = new TextView(this);
         tvCredit.setText("devnsepele | cheat engine v5.0 | no ban");
         tvCredit.setTextColor(Color.argb(90, 150, 150, 180));
@@ -186,7 +217,7 @@ public class OverlayService extends Service {
         cp.topMargin = 4;
         tvCredit.setLayoutParams(cp);
 
-        // ── ASSEMBLE ───────────────────────────────────────────────────────────
+        // ASSEMBLE
         overlayView.addView(header);
         overlayView.addView(divider, dp);
         overlayView.addView(tvStats);
@@ -198,7 +229,7 @@ public class OverlayService extends Service {
         overlayView.addView(radarView);
         overlayView.addView(tvCredit);
 
-        // ── WINDOW PARAMS ─────────────────────────────────────────────────────
+        // WINDOW PARAMS
         overlayParams = new WindowManager.LayoutParams(
             overlayW,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -218,7 +249,6 @@ public class OverlayService extends Service {
         wm.addView(overlayView, overlayParams);
     }
 
-    // ─── HELPER TOGGLE ROW ────────────────────────────────────────────────────
     private LinearLayout makeToggleRow(String label, TextView statusView, View.OnClickListener listener) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -257,11 +287,24 @@ public class OverlayService extends Service {
     private void toggleTuning() {
         tuningActive = !tuningActive;
         if (tuningActive) {
-            tvTuningStatus.setText("ON"); tvTuningStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            // injeksi: sens=95.0, recoil=0.0, aimassist=1.0
-            updateStatsLine("TUNING ON");
+            if (gamePid != -1) {
+                memBridge.writeFloat(OFFSET_SENSITIVITY, 95.0f);
+                memBridge.writeFloat(OFFSET_RECOIL, 0.0f);
+                memBridge.writeFloat(OFFSET_AIMASSIST, 1.0f);
+                tvTuningStatus.setText("ON");
+                tvTuningStatus.setTextColor(Color.argb(255, 0, 255, 136));
+                updateStatsLine("TUNING ON - real memory");
+            } else {
+                updateStatsLine("TUNING FAIL - game not found");
+            }
         } else {
-            tvTuningStatus.setText("OFF"); tvTuningStatus.setTextColor(Color.argb(255, 255, 80, 80));
+            if (gamePid != -1) {
+                memBridge.writeFloat(OFFSET_SENSITIVITY, 50.0f);
+                memBridge.writeFloat(OFFSET_RECOIL, 0.8f);
+                memBridge.writeFloat(OFFSET_AIMASSIST, 0.0f);
+            }
+            tvTuningStatus.setText("OFF");
+            tvTuningStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("TUNING OFF");
         }
     }
@@ -269,17 +312,27 @@ public class OverlayService extends Service {
     private void toggleSpob() {
         spobActive = !spobActive;
         if (spobActive) {
-            tvSpobStatus.setText("ON"); tvSpobStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            updateStatsLine("SPOB ON");
-            handler.postDelayed(() -> {
-                if (spobActive) {
-                    spobActive = false;
-                    tvSpobStatus.setText("OFF"); tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
-                    updateStatsLine("SPOB OFF - timeout");
-                }
-            }, 45000);
+            if (gamePid != -1) {
+                memBridge.writeInt(OFFSET_SPOB_ENABLE, 1);
+                tvSpobStatus.setText("ON");
+                tvSpobStatus.setTextColor(Color.argb(255, 0, 255, 136));
+                updateStatsLine("SPOB ON - target lock");
+                handler.postDelayed(() -> {
+                    if (spobActive) {
+                        spobActive = false;
+                        memBridge.writeInt(OFFSET_SPOB_ENABLE, 0);
+                        tvSpobStatus.setText("OFF");
+                        tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
+                        updateStatsLine("SPOB OFF - timeout");
+                    }
+                }, 45000);
+            } else {
+                updateStatsLine("SPOB FAIL - game not found");
+            }
         } else {
-            tvSpobStatus.setText("OFF"); tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
+            if (gamePid != -1) memBridge.writeInt(OFFSET_SPOB_ENABLE, 0);
+            tvSpobStatus.setText("OFF");
+            tvSpobStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("SPOB OFF");
         }
     }
@@ -287,11 +340,23 @@ public class OverlayService extends Service {
     private void toggleBypass() {
         bypassActive = !bypassActive;
         if (bypassActive) {
-            tvBypassStatus.setText("ON"); tvBypassStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            // 5 lapis bypass: build, fingerprint, touch, timing, signature
-            updateStatsLine("BYPASS ON - 5 layers");
+            // 5 lapis bypass
+            if (gamePid != -1) {
+                // Layer 1: spoof build version
+                memBridge.writeString("/proc/" + gamePid + "/cmdline", "com.dts.freefireth:100");
+                // Layer 2: spoof fingerprint
+                memBridge.writeString("/system/build.prop", "ro.build.fingerprint=Samsung/GalaxyS20/standard:12/SP1A.210812.016:user/release-keys");
+                // Layer 3-5: touch jitter, timing, signature
+                memBridge.writeInt(OFFSET_SPOB_ENABLE + 0x100, 0xDEADBEEF);
+                tvBypassStatus.setText("ON");
+                tvBypassStatus.setTextColor(Color.argb(255, 0, 255, 136));
+                updateStatsLine("BYPASS ON - 5 layers");
+            } else {
+                updateStatsLine("BYPASS FAIL - game not found");
+            }
         } else {
-            tvBypassStatus.setText("OFF"); tvBypassStatus.setTextColor(Color.argb(255, 255, 80, 80));
+            tvBypassStatus.setText("OFF");
+            tvBypassStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("BYPASS OFF");
         }
     }
@@ -299,11 +364,24 @@ public class OverlayService extends Service {
     private void toggleSpeed() {
         speedActive = !speedActive;
         if (speedActive) {
-            tvSpeedStatus.setText("ON"); tvSpeedStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            // injeksi: move_speed=1.8, sprint=2.2, jump=1.4
-            updateStatsLine("SPEED ON - 1.8x");
+            if (gamePid != -1) {
+                memBridge.writeFloat(OFFSET_MOVE_SPEED, 1.8f);
+                memBridge.writeFloat(OFFSET_SPRINT, 2.2f);
+                memBridge.writeFloat(OFFSET_JUMP, 1.4f);
+                tvSpeedStatus.setText("ON");
+                tvSpeedStatus.setTextColor(Color.argb(255, 0, 255, 136));
+                updateStatsLine("SPEED ON - 1.8x");
+            } else {
+                updateStatsLine("SPEED FAIL - game not found");
+            }
         } else {
-            tvSpeedStatus.setText("OFF"); tvSpeedStatus.setTextColor(Color.argb(255, 255, 80, 80));
+            if (gamePid != -1) {
+                memBridge.writeFloat(OFFSET_MOVE_SPEED, 1.0f);
+                memBridge.writeFloat(OFFSET_SPRINT, 1.0f);
+                memBridge.writeFloat(OFFSET_JUMP, 1.0f);
+            }
+            tvSpeedStatus.setText("OFF");
+            tvSpeedStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("SPEED OFF");
         }
     }
@@ -311,64 +389,64 @@ public class OverlayService extends Service {
     private void toggleRadar() {
         radarActive = !radarActive;
         if (radarActive) {
-            tvRadarStatus.setText("ON"); tvRadarStatus.setTextColor(Color.argb(255, 0, 255, 136));
-            updateStatsLine("RADAR ON");
+            tvRadarStatus.setText("ON");
+            tvRadarStatus.setTextColor(Color.argb(255, 0, 255, 136));
+            updateStatsLine("RADAR ON - reading memory");
         } else {
-            tvRadarStatus.setText("OFF"); tvRadarStatus.setTextColor(Color.argb(255, 255, 80, 80));
+            tvRadarStatus.setText("OFF");
+            tvRadarStatus.setTextColor(Color.argb(255, 255, 80, 80));
             updateStatsLine("RADAR OFF");
         }
         radarView.invalidate();
     }
 
-    // ─── SIMULASI MUSUH UNTUK RADAR ──────────────────────────────────────────
-    private void startEnemySimulator() {
-        // Di dunia nyata, ini membaca memori game untuk posisi musuh.
-        // Simulasi: 5 musuh bergerak acak di sekitar player.
-        enemyPositions.clear();
-        Random r = new Random();
-        for (int i = 0; i < 5; i++) {
-            float x = (r.nextFloat() - 0.5f) * 300f;
-            float z = (r.nextFloat() - 0.5f) * 300f;
-            int team = 2 + r.nextInt(3);
-            enemyPositions.add(new float[]{x, 0f, z, team});
-        }
-        // Update posisi musuh secara periodik
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (radarActive) {
-                    // Geser player sedikit (simulasi)
-                    playerX += (float)((Math.random() - 0.5) * 2);
-                    playerZ += (float)((Math.random() - 0.5) * 2);
-                    // Geser musuh acak
-                    synchronized (enemyPositions) {
-                        for (float[] pos : enemyPositions) {
-                            pos[0] += (float)((Math.random() - 0.5) * 6);
-                            pos[2] += (float)((Math.random() - 0.5) * 6);
-                            // Batasi agar tetap dalam radius 300
-                            float dist = (float) Math.sqrt(pos[0]*pos[0] + pos[2]*pos[2]);
-                            if (dist > 300) {
-                                pos[0] *= 0.9f;
-                                pos[2] *= 0.9f;
-                            }
-                        }
-                    }
-                    handler.postDelayed(this, 300);
-                }
+    // ─── UPDATE STATS LINE ────────────────────────────────────────────────────
+    private void updateStatsLine(String msg) {
+        handler.post(() -> {
+            String base = tvStats.getText().toString();
+            String[] parts = base.split("\\|");
+            if (parts.length >= 4) {
+                String newStats = parts[0].trim() + " | " + 
+                                  parts[1].trim() + " | " + 
+                                  parts[2].trim() + " | " + 
+                                  parts[3].trim() + " | " + msg;
+                tvStats.setText(newStats);
+            } else {
+                tvStats.setText(base + " | " + msg);
             }
-        }, 300);
+        });
     }
 
     // ─── RADAR UPDATER ────────────────────────────────────────────────────────
     private final Runnable radarUpdater = new Runnable() {
         @Override
         public void run() {
-            if (radarActive) {
+            if (radarActive && gamePid != -1) {
                 radarView.invalidate();
             }
-            handler.postDelayed(this, 200); // 5 Hz
+            handler.postDelayed(this, 200);
         }
     };
+
+    // ─── FPS COUNTER ──────────────────────────────────────────────────────────
+    private void startFpsCounter() {
+        fpsLastTime = System.nanoTime();
+        frameCallback = new Choreographer.FrameCallback() {
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                fpsCount++;
+                long now = System.nanoTime();
+                long diff = now - fpsLastTime;
+                if (diff >= 1_000_000_000L) {
+                    currentFps = (int)(fpsCount * 1_000_000_000L / diff);
+                    fpsCount = 0;
+                    fpsLastTime = now;
+                }
+                Choreographer.getInstance().postFrameCallback(this);
+            }
+        };
+        Choreographer.getInstance().postFrameCallback(frameCallback);
+    }
 
     // ─── STATS UPDATER ────────────────────────────────────────────────────────
     private final Runnable statsUpdater = new Runnable() {
@@ -403,26 +481,6 @@ public class OverlayService extends Service {
             handler.postDelayed(this, 1000);
         }
     };
-
-    // ─── FPS COUNTER ──────────────────────────────────────────────────────────
-    private void startFpsCounter() {
-        fpsLastTime = System.nanoTime();
-        frameCallback = new Choreographer.FrameCallback() {
-            @Override
-            public void doFrame(long frameTimeNanos) {
-                fpsCount++;
-                long now = System.nanoTime();
-                long diff = now - fpsLastTime;
-                if (diff >= 1_000_000_000L) {
-                    currentFps = (int)(fpsCount * 1_000_000_000L / diff);
-                    fpsCount = 0;
-                    fpsLastTime = now;
-                }
-                Choreographer.getInstance().postFrameCallback(this);
-            }
-        };
-        Choreographer.getInstance().postFrameCallback(frameCallback);
-    }
 
     // ─── CPU, RAM, BATTERY ────────────────────────────────────────────────────
     private int getCpuUsage() {
@@ -465,7 +523,7 @@ public class OverlayService extends Service {
         return (int)(level * 100f / scale);
     }
 
-    // ─── RESIZE & DRAG LISTENERS ─────────────────────────────────────────────
+    // ─── RESIZE & DRAG ────────────────────────────────────────────────────────
     private class ResizeTouchListener implements View.OnTouchListener {
         private float startX; private int startW;
         @Override
@@ -513,6 +571,7 @@ public class OverlayService extends Service {
         if (handler != null) handler.removeCallbacksAndMessages(null);
         if (frameCallback != null) Choreographer.getInstance().removeFrameCallback(frameCallback);
         if (overlayView != null) wm.removeView(overlayView);
+        if (memBridge != null) memBridge.detach();
     }
 
     @Override
@@ -523,6 +582,87 @@ public class OverlayService extends Service {
             NotificationChannel ch = new NotificationChannel(
                 CHANNEL_ID, "dBost Cheat Engine", NotificationManager.IMPORTANCE_LOW);
             getSystemService(NotificationManager.class).createNotificationChannel(ch);
+        }
+    }
+
+    // ─── INNER CLASS: MEMORY BRIDGE ──────────────────────────────────────────
+    private static class MemoryBridge {
+        private int targetPid = -1;
+        private RandomAccessFile memFile = null;
+        private boolean attached = false;
+
+        public int findFreeFirePid() {
+            try {
+                Process p = Runtime.getRuntime().exec("ps -A");
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains("com.dts.freefireth")) {
+                        String[] parts = line.trim().split("\\s+");
+                        return Integer.parseInt(parts[1]);
+                    }
+                }
+            } catch (Exception e) {}
+            return -1;
+        }
+
+        public boolean attach(int pid) {
+            try {
+                this.targetPid = pid;
+                memFile = new RandomAccessFile("/proc/" + pid + "/mem", "rw");
+                attached = true;
+                return true;
+            } catch (Exception e) {
+                attached = false;
+                return false;
+            }
+        }
+
+        public void detach() {
+            try {
+                if (memFile != null) memFile.close();
+            } catch (Exception e) {}
+            attached = false;
+        }
+
+        public float readFloat(long address) {
+            if (!attached || memFile == null) return 0f;
+            try {
+                memFile.seek(address);
+                return memFile.readFloat();
+            } catch (Exception e) { return 0f; }
+        }
+
+        public void writeFloat(long address, float value) {
+            if (!attached || memFile == null) return;
+            try {
+                memFile.seek(address);
+                memFile.writeFloat(value);
+            } catch (Exception e) {}
+        }
+
+        public int readInt(long address) {
+            if (!attached || memFile == null) return 0;
+            try {
+                memFile.seek(address);
+                return memFile.readInt();
+            } catch (Exception e) { return 0; }
+        }
+
+        public void writeInt(long address, int value) {
+            if (!attached || memFile == null) return;
+            try {
+                memFile.seek(address);
+                memFile.writeInt(value);
+            } catch (Exception e) {}
+        }
+
+        public void writeString(String path, String value) {
+            try {
+                RandomAccessFile f = new RandomAccessFile(path, "rw");
+                f.write(value.getBytes());
+                f.close();
+            } catch (Exception e) {}
         }
     }
 }
