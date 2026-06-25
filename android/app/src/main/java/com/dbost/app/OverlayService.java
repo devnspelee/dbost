@@ -5,7 +5,7 @@ import android.content.*;
 import android.graphics.*;
 import android.os.*;
 import android.view.*;
-import android.widget.*;
+import android.webkit.*;
 import androidx.core.app.NotificationCompat;
 
 public class OverlayService extends Service {
@@ -19,29 +19,39 @@ public class OverlayService extends Service {
         createNotificationChannel();
         Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("dBost Active")
-            .setContentText("Floating overlay running")
+            .setContentText("Tap to stop overlay")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build();
         startForeground(1, notif);
 
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        overlayView = new TextView(this);
-        ((TextView) overlayView).setText("dBost");
-        ((TextView) overlayView).setTextColor(Color.WHITE);
-        ((TextView) overlayView).setBackgroundColor(Color.argb(200, 91, 74, 255));
-        ((TextView) overlayView).setPadding(24, 12, 24, 12);
+        // WebView load UI dBost
+        WebView webView = new WebView(this);
+        webView.setBackgroundColor(Color.TRANSPARENT);
+        WebSettings ws = webView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setAllowFileAccess(true);
+        ws.setAllowContentAccess(true);
+        ws.setMediaPlaybackRequiresUserGesture(false);
+        webView.loadUrl("file:///android_asset/public/index.html");
+
+        overlayView = webView;
+
+        // Ukuran overlay — 80% layar
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int w = (int)(dm.widthPixels * 0.8f);
+        int h = (int)(dm.heightPixels * 0.6f);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            w, h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         );
-        params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 100;
-        params.y = 200;
+        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        params.y = 100;
 
         overlayView.setOnTouchListener(new DragTouchListener(wm, params, overlayView));
         wm.addView(overlayView, params);

@@ -556,7 +556,7 @@ export default function DBost() {
           {/* Overlay */}
           <button
             onMouseDown={e => e.stopPropagation()}
-            onClick={startOverlay}
+            onClick={overlayActive ? stopOverlay : startOverlay}
             style={{
               width: 22, height: 22, borderRadius: 6, border: "none",
               background: overlayActive ? `${P.accent}44` : P.dim,
