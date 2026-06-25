@@ -4,20 +4,7 @@ import { registerPlugin, Capacitor } from '@capacitor/core';
 
 const OverlayNative = registerPlugin('Overlay');
 
-async function startOverlay() {
-  try {
-    const { value } = await OverlayNative.hasPermission();
-    if (!value) {
-      await OverlayNative.requestPermission();
-      return;
-    }
-    await OverlayNative.show();
-  } catch(e) { console.log('Overlay error:', e); }
-}
 
-async function stopOverlay() {
-  try { await OverlayNative.hide(); } catch(e) {}
-}
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
 const P = {
@@ -320,6 +307,27 @@ export default function DBost() {
   const [boosting, setBoosting] = useState(false);
   const [boostLevel, setBoostLevel] = useState(2);
   const [boostLog, setBoostLog] = useState([]);
+  const [overlayActive, setOverlayActive] = useState(false);
+
+  const startOverlay = async () => {
+    try {
+      const { value } = await OverlayNative.hasPermission();
+      if (!value) {
+        await OverlayNative.requestPermission();
+        return;
+      }
+      await OverlayNative.show();
+      setOverlayActive(true);
+    } catch(e) { console.log('Overlay error:', e); }
+  };
+
+  const stopOverlay = async () => {
+    try {
+      await OverlayNative.hide();
+      setOverlayActive(false);
+    } catch(e) {}
+  };
+
 
   const [toggles, setToggles] = useState({
     wakeLock: true,
@@ -544,6 +552,20 @@ export default function DBost() {
               {boosting ? "ACTIVE" : "IDLE"}
             </span>
           </div>
+
+          {/* Overlay */}
+          <button
+            onMouseDown={e => e.stopPropagation()}
+            onClick={startOverlay}
+            style={{
+              width: 22, height: 22, borderRadius: 6, border: "none",
+              background: overlayActive ? `${P.accent}44` : P.dim,
+              color: overlayActive ? P.accent : P.muted, cursor: "pointer",
+              fontSize: 10, lineHeight: 1,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            title="Floating Overlay"
+          >⬡</button>
 
           {/* Minimize */}
           <button
