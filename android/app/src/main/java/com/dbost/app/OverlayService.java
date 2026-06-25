@@ -5,7 +5,7 @@ import android.content.*;
 import android.graphics.*;
 import android.os.*;
 import android.view.*;
-import android.webkit.*;
+import android.widget.*;
 import androidx.core.app.NotificationCompat;
 
 public class OverlayService extends Service {
@@ -19,38 +19,44 @@ public class OverlayService extends Service {
         createNotificationChannel();
         Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("dBost Active")
-            .setContentText("Tap to stop overlay")
+            .setContentText("Floating overlay running")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build();
         startForeground(1, notif);
 
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        // WebView load UI dBost
-        WebView webView = new WebView(this);
-        webView.setBackgroundColor(Color.TRANSPARENT);
-        WebSettings ws = webView.getSettings();
-        ws.setJavaScriptEnabled(true);
-        ws.setDomStorageEnabled(true);
-        ws.setAllowFileAccess(true);
-        ws.setAllowContentAccess(true);
-        ws.setMediaPlaybackRequiresUserGesture(false);
-        webView.loadUrl("file:///android_asset/public/index.html");
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setBackgroundColor(Color.argb(220, 10, 10, 15));
+        layout.setPadding(16, 12, 16, 12);
 
-        overlayView = webView;
+        TextView title = new TextView(this);
+        title.setText("dBost");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(12);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        layout.addView(title);
 
-        // Ukuran overlay — 80% layar
-        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int w = (int)(dm.widthPixels * 0.8f);
-        int h = (int)(dm.heightPixels * 0.6f);
+        TextView status = new TextView(this);
+        status.setText("Boosting...");
+        status.setTextColor(Color.argb(255, 0, 255, 136));
+        status.setTextSize(10);
+        layout.addView(status);
+
+        overlayView = layout;
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-            w, h,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         );
-        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        params.gravity = Gravity.TOP | Gravity.END;
+        params.x = 16;
         params.y = 100;
 
         overlayView.setOnTouchListener(new DragTouchListener(wm, params, overlayView));
