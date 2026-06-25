@@ -1,20 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-import { registerPlugin, Capacitor } from '@capacitor/core';
 // ─── Palette ─────────────────────────────────────────────────────────────────
-
-const OverlayNative = registerPlugin('Overlay');
-
-async function startSystemOverlay() {
-  try {
-    const { value } = await OverlayNative.hasPermission();
-    await OverlayNative.show();
-  } catch(e) { console.log('Overlay error:', e); }
-}
-
-async function stopSystemOverlay() {
-  try { await OverlayNative.hide(); } catch(e) {}
-}
 const P = {
   bg:         "#0a0a0f",
   surface:    "#111118",
@@ -563,18 +549,6 @@ export default function DBost() {
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >×</button>
-
-          {/* System Overlay */}
-          <button
-            onMouseDown={e => e.stopPropagation()}
-            onClick={() => startSystemOverlay()}
-            style={{
-              width: 22, height: 22, borderRadius: 6, border: "none",
-              background: `${P.accent}22`, color: P.accent, cursor: "pointer",
-              fontSize: 10, fontWeight: 700, lineHeight: 1,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >OV</button>
         </div>
       </div>
 
@@ -881,8 +855,4 @@ export default function DBost() {
       `}</style>
     </div>
   );
-}
-
-  if (!Capacitor.isNativePlatform()) return;
-  await OverlayNative.hide();
 }
