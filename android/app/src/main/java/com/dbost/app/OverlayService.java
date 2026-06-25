@@ -5,12 +5,12 @@ import android.content.*;
 import android.graphics.*;
 import android.os.*;
 import android.view.*;
-import android.widget.*;
+import android.webkit.*;
 import androidx.core.app.NotificationCompat;
 
 public class OverlayService extends Service {
     private WindowManager wm;
-    private View overlayView;
+    private WebView webView;
     static final String CHANNEL_ID = "dbost_overlay";
 
     @Override
@@ -26,47 +26,44 @@ public class OverlayService extends Service {
 
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(Color.argb(220, 10, 10, 15));
-        layout.setPadding(16, 12, 16, 12);
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.TRANSPARENT);
 
-        TextView title = new TextView(this);
-        title.setText("dBost");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(12);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        layout.addView(title);
+        WebSettings ws = webView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setAllowFileAccess(true);
+        ws.setAllowContentAccess(true);
 
-        TextView status = new TextView(this);
-        status.setText("Boosting...");
-        status.setTextColor(Color.argb(255, 0, 255, 136));
-        status.setTextSize(10);
-        layout.addView(status);
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        webView.loadUrl("file:///android_asset/public/index.html");
 
-        overlayView = layout;
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int w = (int)(dm.widthPixels * 0.85f);
+        int h = (int)(dm.heightPixels * 0.65f);
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            w, h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         );
-        params.gravity = Gravity.TOP | Gravity.END;
-        params.x = 16;
-        params.y = 100;
+        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        params.y = 80;
 
-        overlayView.setOnTouchListener(new DragTouchListener(wm, params, overlayView));
-        wm.addView(overlayView, params);
+        webView.setOnTouchListener(new DragTouchListener(wm, params, webView));
+        wm.addView(webView, params);
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (overlayView != null) wm.removeView(overlayView);
+        if (webView != null) {
+            webView.destroy();
+            wm.removeView(webView);
+        }
     }
 
     @Override
