@@ -181,12 +181,12 @@ public class OverlayService extends Service {
         if (touchSmooth) {
             // Enable smooth touch: lower touch latency via pointer speed
             Settings.System.putInt(getContentResolver(),
-                Settings.System.POINTER_SPEED, -7);
+                "pointer_speed", -7);
             updateChipState(btnSmooth, "SMOOTH ON",
                 Color.argb(40, 0, 255, 136), Color.argb(255, 0, 255, 136));
         } else {
             Settings.System.putInt(getContentResolver(),
-                Settings.System.POINTER_SPEED, 0);
+                "pointer_speed", 0);
             updateChipState(btnSmooth, "SMOOTH OFF",
                 Color.argb(255, 42, 42, 62), Color.argb(180, 150, 150, 180));
         }
@@ -313,13 +313,11 @@ public class OverlayService extends Service {
     }
 
     private void setStatValue(TextView container, String label, String val, int color) {
-        if (container instanceof LinearLayout) {
-            LinearLayout col = (LinearLayout) (Object) container;
-            TextView valView = (TextView) col.getChildAt(1);
-            if (valView != null) {
-                valView.setText(val);
-                valView.setTextColor(color);
-            }
+        LinearLayout col = (LinearLayout)(Object) container;
+        TextView valView = (TextView) col.getChildAt(1);
+        if (valView != null) {
+            valView.setText(val);
+            valView.setTextColor(color);
         }
     }
 
@@ -413,7 +411,7 @@ public class OverlayService extends Service {
         if (overlayView != null) wm.removeView(overlayView);
         // Reset pointer speed on destroy
         if (touchSmooth) {
-            Settings.System.putInt(getContentResolver(), Settings.System.POINTER_SPEED, 0);
+            Settings.System.putInt(getContentResolver(), "pointer_speed", 0);
         }
     }
 
