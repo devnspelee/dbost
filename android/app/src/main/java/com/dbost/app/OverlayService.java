@@ -703,7 +703,7 @@ public class OverlayService extends Service {
 
         public int findFreeFirePid() {
             try {
-                Process p = Runtime.getRuntime().exec("ps -A");
+                java.lang.Process p = Runtime.getRuntime().exec("ps -A");
                 BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
                 String line;
                 while ((line = reader.readLine()) != null) {
