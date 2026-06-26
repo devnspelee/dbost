@@ -7,7 +7,7 @@ public class DragTouchListener implements View.OnTouchListener {
     private final WindowManager.LayoutParams params;
     private final View view;
     private float startX, startY, initX, initY;
-    public boolean isDragging = false; // public supaya bisa diakses
+    public boolean isDragging = false;
     private static final float THRESHOLD = 14f;
 
     public DragTouchListener(WindowManager wm, WindowManager.LayoutParams p, View v) {
@@ -21,7 +21,7 @@ public class DragTouchListener implements View.OnTouchListener {
                 startX = e.getRawX(); startY = e.getRawY();
                 initX = params.x; initY = params.y;
                 isDragging = false;
-                return false; // pass ke child
+                return false; // pass ke child dulu
 
             case MotionEvent.ACTION_MOVE:
                 float dx = e.getRawX() - startX;
@@ -33,7 +33,7 @@ public class DragTouchListener implements View.OnTouchListener {
                     params.x = (int)(initX + dx);
                     params.y = (int)(initY + dy);
                     wm.updateViewLayout(view, params);
-                    return true; // konsumsi event saat drag
+                    return true;
                 }
                 return false;
 

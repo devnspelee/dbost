@@ -18,13 +18,10 @@ public class OverlayService extends Service {
     private long fpsLastTime = 0;
     private Choreographer.FrameCallback frameCallback;
     private WindowManager.LayoutParams overlayParams;
-    private boolean touchSmooth = false;
+    private boolean smoothOn = false;
     private TextView btnSmooth;
-
-    // Stat value TextViews
     private TextView tvCpuVal, tvRamVal, tvFpsVal, tvBatVal;
-    private View cpuBar, ramBar, fpsBar;
-
+    private View cpuBar, ramBar, fpsBar, batBar;
     static final String CHANNEL_ID = "dbost_overlay";
 
     @Override
@@ -49,52 +46,88 @@ public class OverlayService extends Service {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
+    private android.graphics.drawable.GradientDrawable roundRect(int color, int radius) {
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+        gd.setColor(color);
+        gd.setCornerRadius(radius);
+        return gd;
+    }
+
+    private android.graphics.drawable.GradientDrawable roundRectStroke(int color, int radius, int strokeW, int strokeColor) {
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+        gd.setColor(color);
+        gd.setCornerRadius(radius);
+        gd.setStroke(strokeW, strokeColor);
+        return gd;
+    }
+
     private void buildOverlay() {
+        // ── Root
         overlayView = new LinearLayout(this);
         overlayView.setOrientation(LinearLayout.VERTICAL);
-        overlayView.setPadding(dp(12), dp(10), dp(12), dp(10));
-        overlayView.setBackground(makeRoundRect(Color.argb(230, 8, 8, 14), dp(10)));
+        overlayView.setPadding(dp(14), dp(11), dp(14), dp(12));
+        overlayView.setBackground(roundRectStroke(
+            Color.argb(240, 7, 7, 13), dp(14),
+            1, Color.argb(60, 108, 92, 231)));
 
-        // ── Header
+        // ── Header row
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, 0, 0, dp(8));
+        header.setPadding(0, 0, 0, dp(9));
 
+        // Logo box
+        TextView tvLogo = new TextView(this);
+        tvLogo.setText("d");
+        tvLogo.setTextColor(Color.WHITE);
+        tvLogo.setTextSize(13);
+        tvLogo.setTypeface(Typeface.DEFAULT_BOLD);
+        tvLogo.setGravity(Gravity.CENTER);
+        tvLogo.setPadding(dp(6), dp(3), dp(6), dp(3));
+        tvLogo.setBackground(roundRect(Color.argb(255, 108, 92, 231), dp(6)));
+
+        // Title
         TextView tvTitle = new TextView(this);
-        tvTitle.setText("dBost");
-        tvTitle.setTextColor(Color.WHITE);
-        tvTitle.setTextSize(13);
+        tvTitle.setText("  dBost");
+        tvTitle.setTextColor(Color.argb(240, 220, 220, 235));
+        tvTitle.setTextSize(12);
         tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        tvTitle.setLetterSpacing(0.02f);
 
-        TextView tvDot = new TextView(this);
-        tvDot.setText("  *");
-        tvDot.setTextColor(Color.argb(255, 0, 255, 136));
-        tvDot.setTextSize(9);
-
+        // Spacer
         View spacer = new View(this);
         spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
 
+        // Smooth button
         btnSmooth = new TextView(this);
-        btnSmooth.setText("SMOOTH OFF");
-        btnSmooth.setTextColor(Color.argb(180, 150, 150, 180));
-        btnSmooth.setTextSize(8.5f);
+        btnSmooth.setText("SMOOTH");
+        btnSmooth.setTextColor(Color.argb(160, 150, 150, 180));
+        btnSmooth.setTextSize(8f);
         btnSmooth.setTypeface(Typeface.DEFAULT_BOLD);
-        btnSmooth.setPadding(dp(7), dp(3), dp(7), dp(3));
-        btnSmooth.setBackground(makeRoundRect(Color.argb(255, 42, 42, 62), dp(6)));
+        btnSmooth.setLetterSpacing(0.06f);
+        btnSmooth.setPadding(dp(8), dp(4), dp(8), dp(4));
+        btnSmooth.setBackground(roundRectStroke(
+            Color.argb(255, 30, 30, 46), dp(6),
+            1, Color.argb(80, 150, 150, 180)));
+        // Use setOnClickListener on a wrapper to avoid drag conflict
+        btnSmooth.setClickable(true);
+        btnSmooth.setFocusable(true);
         btnSmooth.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_UP) toggleSmooth();
-            return true;
+            if (e.getAction() == MotionEvent.ACTION_UP) {
+                toggleSmooth();
+            }
+            return true; // consume — prevent drag propagation
         });
 
+        // Resize handle
         TextView tvResize = new TextView(this);
         tvResize.setText("  [=]");
-        tvResize.setTextColor(Color.argb(100, 200, 200, 220));
-        tvResize.setTextSize(11);
+        tvResize.setTextColor(Color.argb(80, 200, 200, 220));
+        tvResize.setTextSize(10);
         tvResize.setOnTouchListener(new ResizeTouchListener());
 
+        header.addView(tvLogo);
         header.addView(tvTitle);
-        header.addView(tvDot);
         header.addView(spacer);
         header.addView(btnSmooth);
         header.addView(tvResize);
@@ -103,18 +136,18 @@ public class OverlayService extends Service {
         View div = new View(this);
         LinearLayout.LayoutParams dvp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 1);
-        dvp.bottomMargin = dp(8);
-        div.setBackgroundColor(Color.argb(40, 255, 255, 255));
+        dvp.bottomMargin = dp(10);
+        div.setBackgroundColor(Color.argb(35, 255, 255, 255));
 
-        // ── Stats row
+        // ── Stats grid
         LinearLayout statsRow = new LinearLayout(this);
         statsRow.setOrientation(LinearLayout.HORIZONTAL);
         statsRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        LinearLayout colCpu = makeStatCol("CPU", Color.argb(255, 0, 212, 255));
-        LinearLayout colRam = makeStatCol("RAM", Color.argb(255, 91, 74, 255));
-        LinearLayout colFps = makeStatCol("FPS", Color.argb(255, 0, 255, 136));
-        LinearLayout colBat = makeStatCol("BAT", Color.argb(255, 255, 170, 0));
+        LinearLayout colCpu = makeStatCol("CPU", Color.argb(255, 0, 206, 201));
+        LinearLayout colRam = makeStatCol("RAM", Color.argb(255, 108, 92, 231));
+        LinearLayout colFps = makeStatCol("FPS", Color.argb(255, 0, 184, 148));
+        LinearLayout colBat = makeStatCol("BAT", Color.argb(255, 253, 203, 110));
 
         tvCpuVal = (TextView) colCpu.getChildAt(1);
         tvRamVal = (TextView) colRam.getChildAt(1);
@@ -122,53 +155,53 @@ public class OverlayService extends Service {
         tvBatVal = (TextView) colBat.getChildAt(1);
 
         statsRow.addView(colCpu);
-        statsRow.addView(makeSep());
+        statsRow.addView(makeVDiv());
         statsRow.addView(colRam);
-        statsRow.addView(makeSep());
+        statsRow.addView(makeVDiv());
         statsRow.addView(colFps);
-        statsRow.addView(makeSep());
+        statsRow.addView(makeVDiv());
         statsRow.addView(colBat);
 
-        // ── Mini bars
-        LinearLayout barRow = new LinearLayout(this);
-        barRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams brp = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(3));
-        brp.topMargin = dp(7);
-        barRow.setLayoutParams(brp);
+        // ── Progress bars
+        LinearLayout barSection = new LinearLayout(this);
+        barSection.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams bsp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        bsp.topMargin = dp(10);
+        barSection.setLayoutParams(bsp);
 
-        cpuBar = new View(this);
-        cpuBar.setBackgroundColor(Color.argb(255, 0, 212, 255));
-        ramBar = new View(this);
-        ramBar.setBackgroundColor(Color.argb(255, 91, 74, 255));
-        fpsBar = new View(this);
-        fpsBar.setBackgroundColor(Color.argb(255, 0, 255, 136));
+        cpuBar = new View(this); cpuBar.setBackgroundColor(Color.argb(255, 0, 206, 201));
+        ramBar = new View(this); ramBar.setBackgroundColor(Color.argb(255, 108, 92, 231));
+        fpsBar = new View(this); fpsBar.setBackgroundColor(Color.argb(255, 0, 184, 148));
+        batBar = new View(this); batBar.setBackgroundColor(Color.argb(255, 253, 203, 110));
 
-        barRow.addView(wrapBar(cpuBar));
-        barRow.addView(wrapBar(ramBar));
-        barRow.addView(wrapBar(fpsBar));
+        barSection.addView(makeBarRow(cpuBar, "CPU"));
+        barSection.addView(makeBarRow(ramBar, "RAM"));
+        barSection.addView(makeBarRow(fpsBar, "FPS"));
+        barSection.addView(makeBarRow(batBar, "BAT"));
 
         // ── Credit
         TextView tvCredit = new TextView(this);
         tvCredit.setText("devnsepele monitor");
-        tvCredit.setTextColor(Color.argb(70, 160, 160, 200));
-        tvCredit.setTextSize(8);
-        tvCredit.setLetterSpacing(0.08f);
+        tvCredit.setTextColor(Color.argb(55, 162, 155, 254));
+        tvCredit.setTextSize(7.5f);
+        tvCredit.setLetterSpacing(0.1f);
         LinearLayout.LayoutParams crp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT);
-        crp.topMargin = dp(7);
+        crp.topMargin = dp(9);
         tvCredit.setLayoutParams(crp);
 
         overlayView.addView(header);
         overlayView.addView(div, dvp);
         overlayView.addView(statsRow);
-        overlayView.addView(barRow);
+        overlayView.addView(barSection);
         overlayView.addView(tvCredit);
 
         // ── Window params
         overlayParams = new WindowManager.LayoutParams(
-            dp(300), WindowManager.LayoutParams.WRAP_CONTENT,
+            dp(290), WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
@@ -177,9 +210,9 @@ public class OverlayService extends Service {
         );
         overlayParams.gravity = Gravity.TOP | Gravity.END;
         overlayParams.x = dp(12);
-        overlayParams.y = dp(120);
+        overlayParams.y = dp(100);
 
-        // Drag listener — tidak block child tap
+        // Drag — tidak block child tap
         DragTouchListener dragListener = new DragTouchListener(wm, overlayParams, overlayView);
         overlayView.setOnTouchListener((v, e) -> {
             dragListener.onTouch(v, e);
@@ -189,30 +222,28 @@ public class OverlayService extends Service {
         wm.addView(overlayView, overlayParams);
     }
 
-    // ── Toggle smooth (window animation speed) ───────────────────────────────
+    // ── Toggle smooth ─────────────────────────────────────────────────────────
     private void toggleSmooth() {
-        touchSmooth = !touchSmooth;
-        if (touchSmooth) {
-            // Percepat animasi window = terasa lebih responsif
-            android.provider.Settings.Global.putFloat(
-                getContentResolver(),
-                android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, 0.5f);
-            android.provider.Settings.Global.putFloat(
-                getContentResolver(),
-                android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, 0.5f);
+        smoothOn = !smoothOn;
+        try {
+            android.provider.Settings.Global.putFloat(getContentResolver(),
+                android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, smoothOn ? 0.5f : 1.0f);
+            android.provider.Settings.Global.putFloat(getContentResolver(),
+                android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, smoothOn ? 0.5f : 1.0f);
+        } catch (Exception ignored) {}
+
+        if (smoothOn) {
             btnSmooth.setText("SMOOTH ON");
-            btnSmooth.setTextColor(Color.argb(255, 0, 255, 136));
-            btnSmooth.setBackground(makeRoundRect(Color.argb(40, 0, 255, 136), dp(6)));
+            btnSmooth.setTextColor(Color.argb(255, 0, 184, 148));
+            btnSmooth.setBackground(roundRectStroke(
+                Color.argb(40, 0, 184, 148), dp(6),
+                1, Color.argb(120, 0, 184, 148)));
         } else {
-            android.provider.Settings.Global.putFloat(
-                getContentResolver(),
-                android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, 1.0f);
-            android.provider.Settings.Global.putFloat(
-                getContentResolver(),
-                android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, 1.0f);
-            btnSmooth.setText("SMOOTH OFF");
-            btnSmooth.setTextColor(Color.argb(180, 150, 150, 180));
-            btnSmooth.setBackground(makeRoundRect(Color.argb(255, 42, 42, 62), dp(6)));
+            btnSmooth.setText("SMOOTH");
+            btnSmooth.setTextColor(Color.argb(160, 150, 150, 180));
+            btnSmooth.setBackground(roundRectStroke(
+                Color.argb(255, 30, 30, 46), dp(6),
+                1, Color.argb(80, 150, 150, 180)));
         }
     }
 
@@ -241,26 +272,27 @@ public class OverlayService extends Service {
             int fps = Math.min(currentFps, 120);
             int bat = getBattery();
 
-            int cpuColor = cpu > 85 ? Color.argb(255, 255, 68, 102)
-                : cpu > 65 ? Color.argb(255, 255, 170, 0)
-                : Color.argb(255, 0, 212, 255);
-            int ramColor = ram > 88 ? Color.argb(255, 255, 68, 102)
-                : ram > 72 ? Color.argb(255, 255, 170, 0)
-                : Color.argb(255, 91, 74, 255);
-            int fpsColor = fps < 30 ? Color.argb(255, 255, 68, 102)
-                : fps < 50 ? Color.argb(255, 255, 170, 0)
-                : Color.argb(255, 0, 255, 136);
-            int batColor = bat < 20 ? Color.argb(255, 255, 68, 102)
-                : Color.argb(255, 255, 170, 0);
+            int cpuC = cpu > 85 ? Color.argb(255, 232, 67, 147)
+                : cpu > 65 ? Color.argb(255, 253, 203, 110)
+                : Color.argb(255, 0, 206, 201);
+            int ramC = ram > 88 ? Color.argb(255, 232, 67, 147)
+                : ram > 72 ? Color.argb(255, 253, 203, 110)
+                : Color.argb(255, 108, 92, 231);
+            int fpsC = fps < 30 ? Color.argb(255, 232, 67, 147)
+                : fps < 50 ? Color.argb(255, 253, 203, 110)
+                : Color.argb(255, 0, 184, 148);
+            int batC = bat < 20 ? Color.argb(255, 232, 67, 147)
+                : Color.argb(255, 253, 203, 110);
 
-            tvCpuVal.setText(cpu + "%"); tvCpuVal.setTextColor(cpuColor);
-            tvRamVal.setText(ram + "%"); tvRamVal.setTextColor(ramColor);
-            tvFpsVal.setText(String.valueOf(fps)); tvFpsVal.setTextColor(fpsColor);
-            tvBatVal.setText(bat + "%"); tvBatVal.setTextColor(batColor);
+            tvCpuVal.setText(cpu + "%"); tvCpuVal.setTextColor(cpuC);
+            tvRamVal.setText(ram + "%"); tvRamVal.setTextColor(ramC);
+            tvFpsVal.setText(String.valueOf(fps)); tvFpsVal.setTextColor(fpsC);
+            tvBatVal.setText(bat + "%"); tvBatVal.setTextColor(batC);
 
             updateBar(cpuBar, cpu);
             updateBar(ramBar, ram);
             updateBar(fpsBar, (int)(fps / 1.2f));
+            updateBar(batBar, bat);
 
             handler.postDelayed(this, 1000);
         }
@@ -313,15 +345,16 @@ public class OverlayService extends Service {
 
         TextView lbl = new TextView(this);
         lbl.setText(label);
-        lbl.setTextColor(Color.argb(120, 200, 200, 220));
-        lbl.setTextSize(8);
+        lbl.setTextColor(Color.argb(100, 200, 200, 220));
+        lbl.setTextSize(7.5f);
         lbl.setGravity(Gravity.CENTER);
-        lbl.setLetterSpacing(0.1f);
+        lbl.setLetterSpacing(0.12f);
+        lbl.setTypeface(Typeface.DEFAULT_BOLD);
 
         TextView val = new TextView(this);
-        val.setText("0");
+        val.setText("--");
         val.setTextColor(color);
-        val.setTextSize(13);
+        val.setTextSize(14);
         val.setTypeface(Typeface.MONOSPACE);
         val.setGravity(Gravity.CENTER);
 
@@ -330,24 +363,42 @@ public class OverlayService extends Service {
         return col;
     }
 
-    private View makeSep() {
+    private View makeVDiv() {
         View sep = new View(this);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(1, dp(24));
-        p.leftMargin = dp(4); p.rightMargin = dp(4);
-        sep.setBackgroundColor(Color.argb(30, 255, 255, 255));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(1, dp(28));
+        p.leftMargin = dp(3); p.rightMargin = dp(3);
+        sep.setBackgroundColor(Color.argb(25, 255, 255, 255));
         sep.setLayoutParams(p);
         return sep;
     }
 
-    private LinearLayout wrapBar(View bar) {
-        LinearLayout wrap = new LinearLayout(this);
-        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(0, dp(3), 1f);
-        wp.rightMargin = dp(3);
-        wrap.setLayoutParams(wp);
-        wrap.setBackground(makeRoundRect(Color.argb(40, 255, 255, 255), dp(2)));
-        bar.setLayoutParams(new LinearLayout.LayoutParams(0, dp(3)));
-        wrap.addView(bar);
-        return wrap;
+    private LinearLayout makeBarRow(View bar, String label) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(14));
+        rp.bottomMargin = dp(4);
+        row.setLayoutParams(rp);
+
+        TextView lbl = new TextView(this);
+        lbl.setText(label);
+        lbl.setTextColor(Color.argb(70, 200, 200, 220));
+        lbl.setTextSize(7f);
+        lbl.setTypeface(Typeface.DEFAULT_BOLD);
+        lbl.setLetterSpacing(0.08f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(22), LinearLayout.LayoutParams.WRAP_CONTENT);
+        lbl.setLayoutParams(lp);
+
+        LinearLayout track = new LinearLayout(this);
+        track.setLayoutParams(new LinearLayout.LayoutParams(0, dp(4), 1f));
+        track.setBackground(roundRect(Color.argb(40, 255, 255, 255), dp(2)));
+        bar.setLayoutParams(new LinearLayout.LayoutParams(0, dp(4)));
+        track.addView(bar);
+
+        row.addView(lbl);
+        row.addView(track);
+        return row;
     }
 
     private void updateBar(View bar, int pct) {
@@ -359,23 +410,16 @@ public class OverlayService extends Service {
         }
     }
 
-    private android.graphics.drawable.GradientDrawable makeRoundRect(int color, int radius) {
-        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
-        gd.setColor(color);
-        gd.setCornerRadius(radius);
-        return gd;
-    }
-
     // ── Resize ────────────────────────────────────────────────────────────────
     private class ResizeTouchListener implements View.OnTouchListener {
         private float startX; private int startW;
         @Override public boolean onTouch(View v, MotionEvent e) {
             if (e.getAction() == MotionEvent.ACTION_DOWN) {
                 startX = e.getRawX();
-                startW = overlayParams.width > 0 ? overlayParams.width : dp(300);
+                startW = overlayParams.width > 0 ? overlayParams.width : dp(290);
             } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
                 float dx = startX - e.getRawX();
-                overlayParams.width = Math.max(dp(220), Math.min(dp(480), (int)(startW + dx)));
+                overlayParams.width = Math.max(dp(220), Math.min(dp(500), (int)(startW + dx)));
                 wm.updateViewLayout(overlayView, overlayParams);
             }
             return true;
