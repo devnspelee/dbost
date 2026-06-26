@@ -491,14 +491,27 @@ export default function DBost() {
   // Overlay
   const startOverlay = async () => {
     try {
-      if (typeof OverlayNative !== "undefined") {
-        const { value } = await OverlayNative.hasPermission();
-        if (!value) { await OverlayNative.requestPermission(); return; }
-        await OverlayNative.show();
+      const { value } = await OverlayNative.hasPermission();
+      if (!value) {
+        await OverlayNative.requestPermission();
+        setTimeout(async () => {
+          try {
+            const { value: v2 } = await OverlayNative.hasPermission();
+            if (v2) {
+              await OverlayNative.show();
+              setOverlayActive(true);
+              log("Overlay activated");
+            } else {
+              log("Permission not granted - enable in Settings");
+            }
+          } catch {}
+        }, 2500);
+        return;
       }
+      await OverlayNative.show();
       setOverlayActive(true);
       log("Overlay activated");
-    } catch(e) { setOverlayActive(true); log("Overlay activated"); }
+    } catch(e) { log("Overlay error: " + e); }
   };
   const stopOverlay = async () => {
     try {
