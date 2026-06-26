@@ -1,47 +1,402 @@
 package com.dbost.app;
-import android.app.*; import android.content.*; import android.graphics.*; import android.os.*; import android.view.*; import android.widget.*; import androidx.core.app.NotificationCompat; import java.io.*; import java.util.*;
+
+import android.app.*;
+import android.content.*;
+import android.graphics.*;
+import android.os.*;
+import android.view.*;
+import android.widget.*;
+import androidx.core.app.NotificationCompat;
+import java.io.*;
+
 public class OverlayService extends Service {
-private WindowManager wm; private LinearLayout overlay; private View circle; private TextView stats, credit, ts, ss, bs, sps, rs; private Handler h; private long[] prev; private int fps, fpsCount; private long last; private Choreographer.FrameCallback cb; static final String CID="dbost";
-private int ow=520; private WindowManager.LayoutParams op, cp;
-private boolean tuning, spob, bypass, speed, radar, hidden;
-private MemoryBridge mem=new MemoryBridge(); private int pid=-1;
-private static final long OS=0x7F8A4C00L, OR=0x7F8A4C04L, OA=0x7F8A4C08L, OM=0x7F8A4C0CL, OSprint=0x7F8A4C10L, OJ=0x7F8A4C14L, OSpob=0x7F8A4C18L, OPx=0x7F8A4C20L, OPz=0x7F8A4C28L, OE=0x7F8A4C30L; private static final int ES=0x20;
-@Override public void onCreate(){ super.onCreate(); createChannel(); startForeground(1,new NotificationCompat.Builder(this,CID).setContentTitle("dBost").setSmallIcon(android.R.drawable.ic_dialog_info).build()); wm=(WindowManager)getSystemService(WINDOW_SERVICE); try{System.loadLibrary("mem_bridge");}catch(Exception e){} buildOverlay(); buildCircle(); startFps(); findPid(); h=new Handler(); h.postDelayed(statsUp,1000); h.postDelayed(radarUp,200);}
-private void findPid(){ try{Process p=Runtime.getRuntime().exec("ps -A"); BufferedReader r=new BufferedReader(new InputStreamReader(p.getInputStream())); String l; while((l=r.readLine())!=null){ if(l.contains("com.dts.freefireth")){ pid=Integer.parseInt(l.trim().split("\\s+")[1]); mem.attach(pid); update("PID:"+pid); return;}}}catch(Exception e){update("Game not found");}}
-private void buildOverlay(){ overlay=new LinearLayout(this); overlay.setOrientation(LinearLayout.VERTICAL); overlay.setBackgroundColor(Color.argb(240,8,8,14)); overlay.setPadding(14,10,14,10);
-LinearLayout head=new LinearLayout(this); head.setOrientation(LinearLayout.HORIZONTAL); head.setGravity(Gravity.CENTER_VERTICAL);
-TextView title=new TextView(this); title.setText("dBost"); title.setTextColor(Color.argb(255,255,200,0)); title.setTextSize(14); title.setTypeface(Typeface.DEFAULT_BOLD);
-TextView dot=new TextView(this); dot.setText(" ●"); dot.setTextColor(Color.argb(255,0,255,136)); dot.setTextSize(10);
-View sp=new View(this); LinearLayout.LayoutParams spp=new LinearLayout.LayoutParams(0,1,1f); sp.setLayoutParams(spp);
-TextView hide=new TextView(this); hide.setText("◉"); hide.setTextColor(Color.argb(200,255,255,255)); hide.setTextSize(18); hide.setPadding(8,0,0,0); hide.setOnClickListener(v->toggleHide());
-TextView resize=new TextView(this); resize.setText("⤡"); resize.setTextColor(Color.argb(120,255,255,255)); resize.setTextSize(16); resize.setPadding(8,0,0,0);
-head.addView(title); head.addView(dot); head.addView(sp); head.addView(hide); head.addView(resize);
-View div=new View(this); div.setBackgroundColor(Color.argb(60,255,255,255)); LinearLayout.LayoutParams dp=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,1); dp.topMargin=6; dp.bottomMargin=6;
-stats=new TextView(this); stats.setText("CPU 0% | RAM 0% | FPS 0 | BAT 0%"); stats.setTextColor(Color.argb(230,220,220,235)); stats.setTextSize(10); stats.setTypeface(Typeface.MONOSPACE);
-ts=new TextView(this); ss=new TextView(this); bs=new TextView(this); sps=new TextView(this); rs=new TextView(this);
-overlay.addView(head); overlay.addView(div,dp); overlay.addView(stats); overlay.addView(row("TUNING:",ts,v->toggleTuning())); overlay.addView(row("SPOB:",ss,v->toggleSpob())); overlay.addView(row("BYPASS:",bs,v->toggleBypass())); overlay.addView(row("SPEED:",sps,v->toggleSpeed())); overlay.addView(row("RADAR:",rs,v->toggleRadar()));
-radarView(); credit();
-op=new WindowManager.LayoutParams(ow,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,PixelFormat.TRANSLUCENT); op.gravity=Gravity.TOP|Gravity.END; op.x=12; op.y=100; overlay.setOnTouchListener(new Drag(wm,op,overlay)); resize.setOnTouchListener(new Resize()); wm.addView(overlay,op);}
-private LinearLayout row(String label, TextView status, View.OnClickListener l){ LinearLayout r=new LinearLayout(this); r.setOrientation(LinearLayout.HORIZONTAL); r.setGravity(Gravity.CENTER_VERTICAL); r.setPadding(0,3,0,3); TextView lbl=new TextView(this); lbl.setText(label); lbl.setTextColor(Color.argb(180,200,200,200)); lbl.setTextSize(10); lbl.setTypeface(Typeface.MONOSPACE); lbl.setPadding(0,0,8,0); status.setText("OFF"); status.setTextColor(Color.argb(255,255,80,80)); status.setTextSize(10); status.setTypeface(Typeface.MONOSPACE); status.setPadding(0,0,12,0); Button btn=new Button(this); btn.setText("TOGGLE"); btn.setTextSize(9); btn.setBackgroundColor(Color.argb(200,40,40,60)); btn.setTextColor(Color.WHITE); btn.setPadding(10,3,10,3); btn.setOnClickListener(l); r.addView(lbl); r.addView(status); r.addView(btn); return r;}
-private void radarView(){ View rv=new View(this){ @Override protected void onDraw(Canvas c){ super.onDraw(c); if(!radar||pid==-1)return; int w=getWidth(), h=getHeight(), cx=w/2, cy=h/2, rad=Math.min(w,h)/2-6; Paint p=new Paint(); p.setColor(Color.argb(120,50,50,70)); p.setStyle(Paint.Style.FILL); c.drawCircle(cx,cy,rad,p); p.setColor(Color.argb(180,100,200,255)); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.5f); c.drawCircle(cx,cy,rad,p); float px=mem.readFloat(OPx), pz=mem.readFloat(OPz); p.setColor(Color.argb(255,0,255,0)); p.setStyle(Paint.Style.FILL); c.drawCircle(cx,cy,4,p); float sc=rad/200f; for(int i=0;i<10;i++){ long addr=OE+(i*ES); float ex=mem.readFloat(addr), ez=mem.readFloat(addr+8); int team=mem.readInt(addr+16); if(ex==0&&ez==0)continue; float dx=ex-px, dz=ez-pz, dist=(float)Math.sqrt(dx*dx+dz*dz); if(dist>200f||dist<0.5f)continue; float ang=(float)Math.atan2(dz,dx); float rx=cx+dist*sc*(float)Math.cos(ang), ry=cy+dist*sc*(float)Math.sin(ang); int col=(team==2)?Color.argb(255,255,50,50):(team==3)?Color.argb(255,255,150,0):Color.argb(255,255,200,50); p.setColor(col); p.setStyle(Paint.Style.FILL); float ds=Math.max(3,6-dist/50f); c.drawCircle(rx,ry,ds,p);}}}; rv.setLayoutParams(new LinearLayout.LayoutParams(140,140)); rv.setBackgroundColor(Color.argb(60,0,0,0)); rv.setPadding(4,4,4,4); overlay.addView(rv);}
-private void credit(){ credit=new TextView(this); credit.setText("devnsepele | non-root | hide"); credit.setTextColor(Color.argb(90,150,150,180)); credit.setTextSize(8); LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT); cp.topMargin=4; credit.setLayoutParams(cp); overlay.addView(credit);}
-private void buildCircle(){ circle=new View(this){ @Override protected void onDraw(Canvas c){ super.onDraw(c); int cx=getWidth()/2, cy=getHeight()/2, rad=Math.min(cx,cy)-4; Paint p=new Paint(); p.setColor(Color.argb(220,8,8,14)); p.setStyle(Paint.Style.FILL); c.drawCircle(cx,cy,rad,p); p.setColor(Color.argb(200,255,200,0)); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(2f); c.drawCircle(cx,cy,rad,p); p.setColor(Color.argb(255,255,200,0)); p.setStyle(Paint.Style.FILL); p.setTextSize(20); p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextAlign(Paint.Align.CENTER); Paint.FontMetrics fm=p.getFontMetrics(); c.drawText("dB",cx,cy-(fm.ascent+fm.descent)/2,p); int col=(tuning||spob||speed)?Color.argb(255,0,255,0):Color.argb(255,100,100,100); p.setColor(col); p.setStyle(Paint.Style.FILL); c.drawCircle(cx+rad-10,cy-rad+10,6,p);}}; circle.setLayoutParams(new ViewGroup.LayoutParams(48,48)); circle.setOnClickListener(v->toggleHide()); cp=new WindowManager.LayoutParams(48,48,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,PixelFormat.TRANSLUCENT); cp.gravity=Gravity.TOP|Gravity.END; cp.x=20; cp.y=120; circle.setOnTouchListener(new Drag(wm,cp,circle)); circle.setVisibility(View.GONE);}
-private void toggleHide(){ hidden=!hidden; if(hidden){ overlay.setVisibility(View.GONE); circle.setVisibility(View.VISIBLE); if(circle.getParent()==null)wm.addView(circle,cp);}else{ overlay.setVisibility(View.VISIBLE); circle.setVisibility(View.GONE); if(circle.getParent()!=null)wm.removeView(circle);}}
-private void toggleTuning(){ tuning=!tuning; if(tuning&&pid!=-1){ mem.writeFloat(OS,95f); mem.writeFloat(OR,0f); mem.writeFloat(OA,1f); ts.setText("ON"); ts.setTextColor(Color.argb(255,0,255,136)); update("TUNING ON");}else{ if(pid!=-1){ mem.writeFloat(OS,50f); mem.writeFloat(OR,0.8f); mem.writeFloat(OA,0f);} ts.setText("OFF"); ts.setTextColor(Color.argb(255,255,80,80)); update("TUNING OFF");} circle.invalidate();}
-private void toggleSpob(){ spob=!spob; if(spob&&pid!=-1){ mem.writeInt(OSpob,1); ss.setText("ON"); ss.setTextColor(Color.argb(255,0,255,136)); update("SPOB ON"); h.postDelayed(()->{ if(spob){ spob=false; mem.writeInt(OSpob,0); ss.setText("OFF"); ss.setTextColor(Color.argb(255,255,80,80)); update("SPOB OFF"); circle.invalidate();}},45000);}else{ if(pid!=-1)mem.writeInt(OSpob,0); ss.setText("OFF"); ss.setTextColor(Color.argb(255,255,80,80)); update("SPOB OFF");} circle.invalidate();}
-private void toggleBypass(){ bypass=!bypass; if(bypass&&pid!=-1){ mem.writeInt(OSpob+0x100,0xDEADBEEF); bs.setText("ON"); bs.setTextColor(Color.argb(255,0,255,136)); update("BYPASS ON");}else{ bs.setText("OFF"); bs.setTextColor(Color.argb(255,255,80,80)); update("BYPASS OFF");}}
-private void toggleSpeed(){ speed=!speed; if(speed&&pid!=-1){ mem.writeFloat(OM,1.8f); mem.writeFloat(OSprint,2.2f); mem.writeFloat(OJ,1.4f); sps.setText("ON"); sps.setTextColor(Color.argb(255,0,255,136)); update("SPEED ON");}else{ if(pid!=-1){ mem.writeFloat(OM,1f); mem.writeFloat(OSprint,1f); mem.writeFloat(OJ,1f);} sps.setText("OFF"); sps.setTextColor(Color.argb(255,255,80,80)); update("SPEED OFF");} circle.invalidate();}
-private void toggleRadar(){ radar=!radar; if(radar){ rs.setText("ON"); rs.setTextColor(Color.argb(255,0,255,136)); update("RADAR ON");}else{ rs.setText("OFF"); rs.setTextColor(Color.argb(255,255,80,80)); update("RADAR OFF");}}
-private void update(String msg){ h.post(()->{ String base=stats.getText().toString(); String[] parts=base.split("\\|"); if(parts.length>=4)stats.setText(parts[0].trim()+" | "+parts[1].trim()+" | "+parts[2].trim()+" | "+parts[3].trim()+" | "+msg); else stats.setText(base+" | "+msg);});}
-private final Runnable radarUp=()->{ if(radar&&pid!=-1){ View rv=overlay.getChildAt(overlay.indexOfChild(stats)+6); if(rv!=null)rv.invalidate();} h.postDelayed(radarUp,200);};
-private void startFps(){ last=System.nanoTime(); cb=new Choreographer.FrameCallback(){ public void doFrame(long t){ fpsCount++; long now=System.nanoTime(); if(now-last>=1000000000L){ fps=(int)(fpsCount*1000000000L/(now-last)); fpsCount=0; last=now;} Choreographer.getInstance().postFrameCallback(this);}}; Choreographer.getInstance().postFrameCallback(cb);}
-private final Runnable statsUp=new Runnable(){ public void run(){ int cpu=getCpu(), ram=getRam(), bat=getBat(); String extra=""; if(tuning)extra+=" T:ON"; if(spob)extra+=" S:ON"; if(bypass)extra+=" B:ON"; if(speed)extra+=" SPD:ON"; if(radar)extra+=" R:ON"; if(extra.isEmpty())extra=" idle"; String s=String.format("CPU %2d%% | RAM %2d%% | FPS %2d | BAT %2d%%%s",cpu,ram,fps,bat,extra); stats.setText(s); stats.setTextColor((cpu>85||ram>88)?Color.argb(255,255,68,102):(cpu>65||ram>72)?Color.argb(255,255,170,0):Color.argb(230,220,220,235)); h.postDelayed(this,1000);}};
-private int getCpu(){ try{RandomAccessFile f=new RandomAccessFile("/proc/stat","r"); String l=f.readLine(); f.close(); String[] t=l.trim().split("\\s+"); long idle=Long.parseLong(t[4]); long total=0; for(int i=1;i<Math.min(t.length,9);i++)total+=Long.parseLong(t[i]); if(prev!=null){ long dIdle=idle-prev[0], dTotal=total-prev[1]; prev=new long[]{idle,total}; return(int)(100L*(dTotal-dIdle)/Math.max(dTotal,1));} prev=new long[]{idle,total}; return 0;}catch(Exception e){return 0;}}
-private int getRam(){ ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE); ActivityManager.MemoryInfo mi=new ActivityManager.MemoryInfo(); am.getMemoryInfo(mi); if(mi.totalMem==0)return 0; return(int)(100L-mi.availMem*100L/mi.totalMem);}
-private int getBat(){ Intent i=registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED)); if(i==null)return 0; int l=i.getIntExtra(BatteryManager.EXTRA_LEVEL,-1), s=i.getIntExtra(BatteryManager.EXTRA_SCALE,-1); if(l<0||s<=0)return 0; return(int)(l*100f/s);}
-private class Resize implements View.OnTouchListener{ float sx; int sw; public boolean onTouch(View v,MotionEvent e){ if(e.getAction()==MotionEvent.ACTION_DOWN){ sx=e.getRawX(); sw=op.width; return true;} if(e.getAction()==MotionEvent.ACTION_MOVE){ int nw=Math.max(380,Math.min(720,(int)(sw+sx-e.getRawX()))); op.width=nw; wm.updateViewLayout(overlay,op); return true;} return false;}}
-private static class Drag implements View.OnTouchListener{ WindowManager w; WindowManager.LayoutParams p; View v; int ix,iy; float itx,ity; Drag(WindowManager w,WindowManager.LayoutParams p,View v){ this.w=w; this.p=p; this.v=v;} public boolean onTouch(View view,MotionEvent e){ if(e.getAction()==MotionEvent.ACTION_DOWN){ ix=p.x; iy=p.y; itx=e.getRawX(); ity=e.getRawY(); return true;} if(e.getAction()==MotionEvent.ACTION_MOVE){ p.x=ix+(int)(e.getRawX()-itx); p.y=iy+(int)(e.getRawY()-ity); w.updateViewLayout(v,p); return true;} return false;}}
-@Override public void onDestroy(){ super.onDestroy(); h.removeCallbacksAndMessages(null); if(cb!=null)Choreographer.getInstance().removeFrameCallback(cb); if(overlay!=null)wm.removeView(overlay); if(circle!=null&&circle.getParent()!=null)wm.removeView(circle); mem.detach();}
-@Override public IBinder onBind(Intent i){return null;}
-private void createChannel(){ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O){ NotificationChannel ch=new NotificationChannel(CID,"dBost",NotificationManager.IMPORTANCE_LOW); getSystemService(NotificationManager.class).createNotificationChannel(ch);}}
-private static class MemoryBridge{ int pid; boolean attached; static{ try{System.loadLibrary("mem_bridge");}catch(UnsatisfiedLinkError e){}} public native boolean nativeAttach(int pid); public native float nativeReadFloat(long addr); public native void nativeWriteFloat(long addr,float val); public native int nativeReadInt(long addr); public native void nativeWriteInt(long addr,int val); public int findPid(){ try{Process p=Runtime.getRuntime().exec("ps -A"); BufferedReader r=new BufferedReader(new InputStreamReader(p.getInputStream())); String l; while((l=r.readLine())!=null){ if(l.contains("com.dts.freefireth"))return Integer.parseInt(l.trim().split("\\s+")[1]);}}catch(Exception e){} return -1;} public boolean attach(int p){ pid=p; try{attached=nativeAttach(p);}catch(UnsatisfiedLinkError e){attached=false;} return attached;} public void detach(){attached=false;} public float readFloat(long a){ if(!attached)return 0; try{return nativeReadFloat(a);}catch(Exception e){return 0;}} public void writeFloat(long a,float v){ if(!attached)return; try{nativeWriteFloat(a,v);}catch(Exception e){}} public int readInt(long a){ if(!attached)return 0; try{return nativeReadInt(a);}catch(Exception e){return 0;}} public void writeInt(long a,int v){ if(!attached)return; try{nativeWriteInt(a,v);}catch(Exception e){}}}}
+    private WindowManager wm;
+    private LinearLayout overlayView;
+    private Handler handler;
+    private long[] prevCpuTimes = null;
+    private int currentFps = 0, fpsCount = 0;
+    private long fpsLastTime = 0;
+    private Choreographer.FrameCallback frameCallback;
+    private WindowManager.LayoutParams overlayParams;
+    private boolean touchSmooth = false;
+    private TextView btnSmooth;
+
+    // Stat value TextViews
+    private TextView tvCpuVal, tvRamVal, tvFpsVal, tvBatVal;
+    private View cpuBar, ramBar, fpsBar;
+
+    static final String CHANNEL_ID = "dbost_overlay";
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createNotificationChannel();
+        Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("dBost Monitor")
+            .setContentText("devnsepele monitor active")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build();
+        startForeground(1, notif);
+        wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        buildOverlay();
+        startFpsCounter();
+        handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(statsUpdater, 800);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void buildOverlay() {
+        overlayView = new LinearLayout(this);
+        overlayView.setOrientation(LinearLayout.VERTICAL);
+        overlayView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        overlayView.setBackground(makeRoundRect(Color.argb(230, 8, 8, 14), dp(10)));
+
+        // ── Header
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, 0, 0, dp(8));
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("dBost");
+        tvTitle.setTextColor(Color.WHITE);
+        tvTitle.setTextSize(13);
+        tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+
+        TextView tvDot = new TextView(this);
+        tvDot.setText("  *");
+        tvDot.setTextColor(Color.argb(255, 0, 255, 136));
+        tvDot.setTextSize(9);
+
+        View spacer = new View(this);
+        spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
+
+        btnSmooth = new TextView(this);
+        btnSmooth.setText("SMOOTH OFF");
+        btnSmooth.setTextColor(Color.argb(180, 150, 150, 180));
+        btnSmooth.setTextSize(8.5f);
+        btnSmooth.setTypeface(Typeface.DEFAULT_BOLD);
+        btnSmooth.setPadding(dp(7), dp(3), dp(7), dp(3));
+        btnSmooth.setBackground(makeRoundRect(Color.argb(255, 42, 42, 62), dp(6)));
+        btnSmooth.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_UP) toggleSmooth();
+            return true;
+        });
+
+        TextView tvResize = new TextView(this);
+        tvResize.setText("  [=]");
+        tvResize.setTextColor(Color.argb(100, 200, 200, 220));
+        tvResize.setTextSize(11);
+        tvResize.setOnTouchListener(new ResizeTouchListener());
+
+        header.addView(tvTitle);
+        header.addView(tvDot);
+        header.addView(spacer);
+        header.addView(btnSmooth);
+        header.addView(tvResize);
+
+        // ── Divider
+        View div = new View(this);
+        LinearLayout.LayoutParams dvp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        dvp.bottomMargin = dp(8);
+        div.setBackgroundColor(Color.argb(40, 255, 255, 255));
+
+        // ── Stats row
+        LinearLayout statsRow = new LinearLayout(this);
+        statsRow.setOrientation(LinearLayout.HORIZONTAL);
+        statsRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        LinearLayout colCpu = makeStatCol("CPU", Color.argb(255, 0, 212, 255));
+        LinearLayout colRam = makeStatCol("RAM", Color.argb(255, 91, 74, 255));
+        LinearLayout colFps = makeStatCol("FPS", Color.argb(255, 0, 255, 136));
+        LinearLayout colBat = makeStatCol("BAT", Color.argb(255, 255, 170, 0));
+
+        tvCpuVal = (TextView) colCpu.getChildAt(1);
+        tvRamVal = (TextView) colRam.getChildAt(1);
+        tvFpsVal = (TextView) colFps.getChildAt(1);
+        tvBatVal = (TextView) colBat.getChildAt(1);
+
+        statsRow.addView(colCpu);
+        statsRow.addView(makeSep());
+        statsRow.addView(colRam);
+        statsRow.addView(makeSep());
+        statsRow.addView(colFps);
+        statsRow.addView(makeSep());
+        statsRow.addView(colBat);
+
+        // ── Mini bars
+        LinearLayout barRow = new LinearLayout(this);
+        barRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams brp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(3));
+        brp.topMargin = dp(7);
+        barRow.setLayoutParams(brp);
+
+        cpuBar = new View(this);
+        cpuBar.setBackgroundColor(Color.argb(255, 0, 212, 255));
+        ramBar = new View(this);
+        ramBar.setBackgroundColor(Color.argb(255, 91, 74, 255));
+        fpsBar = new View(this);
+        fpsBar.setBackgroundColor(Color.argb(255, 0, 255, 136));
+
+        barRow.addView(wrapBar(cpuBar));
+        barRow.addView(wrapBar(ramBar));
+        barRow.addView(wrapBar(fpsBar));
+
+        // ── Credit
+        TextView tvCredit = new TextView(this);
+        tvCredit.setText("devnsepele monitor");
+        tvCredit.setTextColor(Color.argb(70, 160, 160, 200));
+        tvCredit.setTextSize(8);
+        tvCredit.setLetterSpacing(0.08f);
+        LinearLayout.LayoutParams crp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        crp.topMargin = dp(7);
+        tvCredit.setLayoutParams(crp);
+
+        overlayView.addView(header);
+        overlayView.addView(div, dvp);
+        overlayView.addView(statsRow);
+        overlayView.addView(barRow);
+        overlayView.addView(tvCredit);
+
+        // ── Window params
+        overlayParams = new WindowManager.LayoutParams(
+            dp(300), WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        );
+        overlayParams.gravity = Gravity.TOP | Gravity.END;
+        overlayParams.x = dp(12);
+        overlayParams.y = dp(120);
+
+        // Drag listener — tidak block child tap
+        DragTouchListener dragListener = new DragTouchListener(wm, overlayParams, overlayView);
+        overlayView.setOnTouchListener((v, e) -> {
+            dragListener.onTouch(v, e);
+            return dragListener.isDragging;
+        });
+
+        wm.addView(overlayView, overlayParams);
+    }
+
+    // ── Toggle smooth (window animation speed) ───────────────────────────────
+    private void toggleSmooth() {
+        touchSmooth = !touchSmooth;
+        if (touchSmooth) {
+            // Percepat animasi window = terasa lebih responsif
+            android.provider.Settings.Global.putFloat(
+                getContentResolver(),
+                android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, 0.5f);
+            android.provider.Settings.Global.putFloat(
+                getContentResolver(),
+                android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, 0.5f);
+            btnSmooth.setText("SMOOTH ON");
+            btnSmooth.setTextColor(Color.argb(255, 0, 255, 136));
+            btnSmooth.setBackground(makeRoundRect(Color.argb(40, 0, 255, 136), dp(6)));
+        } else {
+            android.provider.Settings.Global.putFloat(
+                getContentResolver(),
+                android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, 1.0f);
+            android.provider.Settings.Global.putFloat(
+                getContentResolver(),
+                android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, 1.0f);
+            btnSmooth.setText("SMOOTH OFF");
+            btnSmooth.setTextColor(Color.argb(180, 150, 150, 180));
+            btnSmooth.setBackground(makeRoundRect(Color.argb(255, 42, 42, 62), dp(6)));
+        }
+    }
+
+    // ── FPS via Choreographer ─────────────────────────────────────────────────
+    private void startFpsCounter() {
+        fpsLastTime = System.nanoTime();
+        frameCallback = frameTimeNanos -> {
+            fpsCount++;
+            long now = System.nanoTime();
+            long diff = now - fpsLastTime;
+            if (diff >= 1_000_000_000L) {
+                currentFps = (int)(fpsCount * 1_000_000_000L / diff);
+                fpsCount = 0;
+                fpsLastTime = now;
+            }
+            Choreographer.getInstance().postFrameCallback(frameCallback);
+        };
+        Choreographer.getInstance().postFrameCallback(frameCallback);
+    }
+
+    // ── Stats updater ─────────────────────────────────────────────────────────
+    private final Runnable statsUpdater = new Runnable() {
+        @Override public void run() {
+            int cpu = getCpuUsage();
+            int ram = getRamUsage();
+            int fps = Math.min(currentFps, 120);
+            int bat = getBattery();
+
+            int cpuColor = cpu > 85 ? Color.argb(255, 255, 68, 102)
+                : cpu > 65 ? Color.argb(255, 255, 170, 0)
+                : Color.argb(255, 0, 212, 255);
+            int ramColor = ram > 88 ? Color.argb(255, 255, 68, 102)
+                : ram > 72 ? Color.argb(255, 255, 170, 0)
+                : Color.argb(255, 91, 74, 255);
+            int fpsColor = fps < 30 ? Color.argb(255, 255, 68, 102)
+                : fps < 50 ? Color.argb(255, 255, 170, 0)
+                : Color.argb(255, 0, 255, 136);
+            int batColor = bat < 20 ? Color.argb(255, 255, 68, 102)
+                : Color.argb(255, 255, 170, 0);
+
+            tvCpuVal.setText(cpu + "%"); tvCpuVal.setTextColor(cpuColor);
+            tvRamVal.setText(ram + "%"); tvRamVal.setTextColor(ramColor);
+            tvFpsVal.setText(String.valueOf(fps)); tvFpsVal.setTextColor(fpsColor);
+            tvBatVal.setText(bat + "%"); tvBatVal.setTextColor(batColor);
+
+            updateBar(cpuBar, cpu);
+            updateBar(ramBar, ram);
+            updateBar(fpsBar, (int)(fps / 1.2f));
+
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    // ── Real CPU ──────────────────────────────────────────────────────────────
+    private int getCpuUsage() {
+        try {
+            RandomAccessFile r = new RandomAccessFile("/proc/stat", "r");
+            String line = r.readLine(); r.close();
+            String[] t = line.trim().split("\\s+");
+            long idle = Long.parseLong(t[4]);
+            long total = 0;
+            for (int i = 1; i < Math.min(t.length, 9); i++) total += Long.parseLong(t[i]);
+            if (prevCpuTimes != null) {
+                long dI = idle - prevCpuTimes[0], dT = total - prevCpuTimes[1];
+                prevCpuTimes = new long[]{idle, total};
+                return (int)(100L * (dT - dI) / Math.max(dT, 1));
+            }
+            prevCpuTimes = new long[]{idle, total};
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    // ── Real RAM ──────────────────────────────────────────────────────────────
+    private int getRamUsage() {
+        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        if (mi.totalMem == 0) return 0;
+        return (int)(100L - mi.availMem * 100L / mi.totalMem);
+    }
+
+    // ── Real Battery ──────────────────────────────────────────────────────────
+    private int getBattery() {
+        Intent i = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (i == null) return 0;
+        int lv = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int sc = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        return (sc > 0 && lv >= 0) ? (int)(lv * 100f / sc) : 0;
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
+    private LinearLayout makeStatCol(String label, int color) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+        col.setLayoutParams(new LinearLayout.LayoutParams(0,
+            LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView lbl = new TextView(this);
+        lbl.setText(label);
+        lbl.setTextColor(Color.argb(120, 200, 200, 220));
+        lbl.setTextSize(8);
+        lbl.setGravity(Gravity.CENTER);
+        lbl.setLetterSpacing(0.1f);
+
+        TextView val = new TextView(this);
+        val.setText("0");
+        val.setTextColor(color);
+        val.setTextSize(13);
+        val.setTypeface(Typeface.MONOSPACE);
+        val.setGravity(Gravity.CENTER);
+
+        col.addView(lbl);
+        col.addView(val);
+        return col;
+    }
+
+    private View makeSep() {
+        View sep = new View(this);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(1, dp(24));
+        p.leftMargin = dp(4); p.rightMargin = dp(4);
+        sep.setBackgroundColor(Color.argb(30, 255, 255, 255));
+        sep.setLayoutParams(p);
+        return sep;
+    }
+
+    private LinearLayout wrapBar(View bar) {
+        LinearLayout wrap = new LinearLayout(this);
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(0, dp(3), 1f);
+        wp.rightMargin = dp(3);
+        wrap.setLayoutParams(wp);
+        wrap.setBackground(makeRoundRect(Color.argb(40, 255, 255, 255), dp(2)));
+        bar.setLayoutParams(new LinearLayout.LayoutParams(0, dp(3)));
+        wrap.addView(bar);
+        return wrap;
+    }
+
+    private void updateBar(View bar, int pct) {
+        View parent = (View) bar.getParent();
+        if (parent != null && parent.getWidth() > 0) {
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) bar.getLayoutParams();
+            lp.width = (int)(parent.getWidth() * Math.min(pct, 100) / 100f);
+            bar.setLayoutParams(lp);
+        }
+    }
+
+    private android.graphics.drawable.GradientDrawable makeRoundRect(int color, int radius) {
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+        gd.setColor(color);
+        gd.setCornerRadius(radius);
+        return gd;
+    }
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+    private class ResizeTouchListener implements View.OnTouchListener {
+        private float startX; private int startW;
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                startX = e.getRawX();
+                startW = overlayParams.width > 0 ? overlayParams.width : dp(300);
+            } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                float dx = startX - e.getRawX();
+                overlayParams.width = Math.max(dp(220), Math.min(dp(480), (int)(startW + dx)));
+                wm.updateViewLayout(overlayView, overlayParams);
+            }
+            return true;
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (handler != null) handler.removeCallbacks(statsUpdater);
+        if (frameCallback != null) Choreographer.getInstance().removeFrameCallback(frameCallback);
+        if (overlayView != null) wm.removeView(overlayView);
+    }
+
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel ch = new NotificationChannel(
+                CHANNEL_ID, "dBost Monitor", NotificationManager.IMPORTANCE_LOW);
+            getSystemService(NotificationManager.class).createNotificationChannel(ch);
+        }
+    }
+}
