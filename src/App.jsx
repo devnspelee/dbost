@@ -1,3 +1,6 @@
+import { registerPlugin } from "@capacitor/core";
+const OverlayNative = registerPlugin("Overlay");
+
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Themes ───────────────────────────────────────────────────────────────────
