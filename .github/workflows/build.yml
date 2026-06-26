@@ -21,7 +21,7 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
       - name: Decode Keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/dbost.jks
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/dbost.p12
       - name: Build Release APK
         run: cd android && chmod +x gradlew && ./gradlew assembleRelease
         env:

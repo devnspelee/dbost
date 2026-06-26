@@ -56,7 +56,7 @@ try {
 android {
     signingConfigs {
         release {
-            storeFile file(System.getenv("STORE_FILE") ?: "dbost.jks")
+            storeFile file(System.getenv("STORE_FILE") ?: "dbost.p12")
             storePassword System.getenv("STORE_PASSWORD") ?: ""
             keyAlias System.getenv("KEY_ALIAS") ?: ""
             keyPassword System.getenv("KEY_PASSWORD") ?: ""
