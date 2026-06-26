@@ -20,10 +20,17 @@ jobs:
         run: npm run build
       - name: Sync Capacitor
         run: npx cap sync android
-      - name: Build APK
-        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - name: Decode Keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/dbost.jks
+      - name: Build Release APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleRelease
+        env:
+          STORE_FILE: dbost.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: dbost-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
